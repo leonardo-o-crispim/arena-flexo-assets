@@ -567,6 +567,44 @@
     overflow-y:auto;
     /* opaco de verdade: a 94% o contador e as barras da batalha vazavam por trás */
     background:linear-gradient(180deg, #0B1526, #050A14); }
+
+  /* ═══════ 📷 FASE DE ENQUADRAMENTO — o vídeo precisa APARECER ═══════
+     Aqui o painel fica transparente e some com todo o texto de apresentação:
+     o jogador tem que se ver e ver o esqueleto para saber o que ajustar.
+     Só ficam o aviso de enquadramento, a contagem e o botão de voltar. */
+  .prep-overlay.camera-visivel{ justify-content:flex-end; padding-bottom:9vh;
+    background:linear-gradient(180deg, rgba(5,10,20,.62) 0%, rgba(5,10,20,0) 22%,
+                                       rgba(5,10,20,0) 58%, rgba(5,10,20,.8) 100%); }
+  .prep-overlay.camera-visivel .prep-eyebrow,
+  .prep-overlay.camera-visivel .prep-enemy,
+  .prep-overlay.camera-visivel .prep-exercise,
+  .prep-overlay.camera-visivel .prep-modes,
+  .prep-overlay.camera-visivel .prep-guide{ display:none; }
+  .prep-overlay.camera-visivel .prep-status{ box-shadow:0 6px 20px rgba(0,0,0,.6); }
+  /* O HUD da batalha fica ATRÁS deste painel; com ele transparente, o contador
+     cairia bem em cima do corpo e o FINALIZAR viraria toque acidental. Some com
+     eles enquanto é só enquadramento — o inimigo no topo fica, não atrapalha.
+     O ".show" no seletor é essencial: quando a luta começa o painel perde essa
+     classe e o HUD volta sozinho. */
+  .prep-overlay.show.camera-visivel ~ .rep-center,
+  .prep-overlay.show.camera-visivel ~ .player-hp-wrap,
+  .prep-overlay.show.camera-visivel ~ .power-bar-wrap,
+  .prep-overlay.show.camera-visivel ~ .bottom-panel{ display:none; }
+
+  /* botão de voltar: flutua no canto, acima do painel, em todas as fases */
+  .prep-back{ position:absolute; left:14px; top:max(14px, env(safe-area-inset-top));
+    z-index:3; padding:9px 15px; border-radius:12px; cursor:pointer;
+    border:1px solid var(--gold-dim); background:rgba(10,20,36,.86);
+    color:#e8dcc8; font-family:'Chakra Petch',sans-serif; font-weight:700;
+    font-size:12px; letter-spacing:1px; backdrop-filter:blur(6px);
+    box-shadow:0 4px 14px rgba(0,0,0,.5); transition:.16s ease; }
+  .prep-back:hover{ border-color:var(--gold); transform:translateY(-2px); }
+  .prep-back:active{ transform:scale(.95); }
+  /* dica de calibração, só enquanto o jogador está se enquadrando */
+  .prep-ajuste{ display:none; margin-top:9px; font-size:11.5px; line-height:1.5;
+    color:#cfd8e8; max-width:290px; text-shadow:0 1px 3px rgba(0,0,0,.9); }
+  .prep-overlay.camera-visivel .prep-ajuste{ display:block; }
+  .prep-ajuste b{ color:var(--gold-light); }
   .prep-overlay.show{ display:flex; }
   .prep-eyebrow{ font-size:10px; letter-spacing:4px; text-transform:uppercase; color:#8291a8; }
   .prep-enemy{ font-family:'Cinzel Decorative',serif; font-size:22px; color:var(--gold-light); line-height:1.2; }
@@ -995,6 +1033,8 @@
 
       <!-- PREPARAÇÃO DA BATALHA: câmera, permissão, enquadramento e contagem -->
       <div class="prep-overlay" id="prepOverlay">
+        <!-- saída sempre visível: o ✕ do topo fica atrás deste painel -->
+        <button class="prep-back" id="prepBackBtn">◀ VOLTAR</button>
         <div class="prep-eyebrow">Preparando batalha</div>
         <div class="prep-enemy" id="prepEnemy">Inimigo</div>
         <div class="prep-exercise"><span id="prepExercise">Flexão</span> é o seu ataque</div>
@@ -1025,6 +1065,11 @@
         <div class="prep-error" id="prepError" style="display:none;"></div>
         <div class="prep-loading" id="prepLoading" style="display:none;">Carregando reconhecimento corporal…</div>
         <div class="prep-status" id="prepStatus" style="display:none;">Procurando você…</div>
+        <div class="prep-ajuste">
+          Os pontos e linhas mostram o que a câmera está reconhecendo.<br>
+          Não detectou direito? Toque em <b>◀ VOLTAR</b> e use
+          <b>ajustar sensibilidade da câmera</b>.
+        </div>
         <div class="prep-countdown" id="prepCountdown"></div>
         <button class="cta-btn main" id="prepActivateBtn">ATIVAR CÂMERA</button>
       </div>
@@ -3766,7 +3811,7 @@
       else{
         clearInterval(prepCountdownId); prepCountdownId=null;
         $('prepCountdown').textContent='';
-        $('prepOverlay').classList.remove('show');
+        $('prepOverlay').classList.remove('show','camera-visivel');   // devolve o HUD à luta
         $('enemyWrap').style.display='block';
         beginBattleTimers();     // ⏱️ agora sim: tempo corre e o inimigo passa a atacar
         floatingText('LUTE!', 'var(--gold)', 40);
@@ -3787,7 +3832,10 @@
     $('prepActivateBtn').textContent = phase==='error' ? 'TENTAR NOVAMENTE' : 'ATIVAR CÂMERA';
     $('prepLoading').style.display = phase==='loading' ? 'block' : 'none';
     $('prepStatus').style.display = phase==='detecting' ? 'block' : 'none';
-    $('prepHint').style.display = phase==='error' ? 'none' : 'block';
+    // no enquadramento o painel fica transparente para o jogador SE VER;
+    // o texto de apresentação sairia por cima do vídeo, então some junto.
+    $('prepHint').style.display = (phase==='error' || phase==='detecting') ? 'none' : 'block';
+    $('prepOverlay').classList.toggle('camera-visivel', phase==='detecting');
     // o guia só faz sentido antes de ativar a câmera; no erro, a mensagem é o foco
     $('prepGuide').classList.toggle('show', phase==='intro');
   }
@@ -4013,7 +4061,16 @@
   document.addEventListener('visibilitychange', ()=>{
     if(document.hidden && running && !Battle.over){ stopWorkout(); showPrepScreen('intro'); }
   });
-  $('closeBtn').addEventListener('click', async ()=>{ stopWorkout(); await saveProfile(); showScreen('menu'); renderTopBar(); renderArenaPanel(); });
+  // saída da batalha — um caminho só, usado pelo ✕ do topo e pelo VOLTAR do painel
+  async function sairDaBatalha(){
+    stopWorkout();
+    await saveProfile();
+    showScreen('menu');
+    renderTopBar();
+    renderArenaPanel();
+  }
+  $('closeBtn').addEventListener('click', sairDaBatalha);
+  $('prepBackBtn').addEventListener('click', sairDaBatalha);
   $('finishBtn').addEventListener('click', ()=>{ finishWorkout(); });
   $('retryBtn').addEventListener('click', ()=>{ showScreen('menu'); renderTopBar(); renderArenaPanel(); });
   $('gotoSens').addEventListener('click', openSensibilidade);
