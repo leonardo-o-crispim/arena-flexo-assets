@@ -605,6 +605,12 @@
     color:#cfd8e8; max-width:290px; text-shadow:0 1px 3px rgba(0,0,0,.9); }
   .prep-overlay.camera-visivel .prep-ajuste{ display:block; }
   .prep-ajuste b{ color:var(--gold-light); }
+  /* escotilha: só aparece quando o enquadramento não sai do lugar */
+  .prep-fix{ display:none; margin-top:2px; padding:11px 18px; border-radius:12px; cursor:pointer;
+    border:1px solid var(--gold-dim); background:rgba(232,191,95,.12); color:var(--gold-light);
+    font-family:'Chakra Petch',sans-serif; font-weight:700; font-size:12px; letter-spacing:.5px;
+    box-shadow:0 4px 14px rgba(0,0,0,.5); transition:.16s ease; }
+  .prep-fix:active{ transform:scale(.96); }
   .prep-overlay.show{ display:flex; }
   .prep-eyebrow{ font-size:10px; letter-spacing:4px; text-transform:uppercase; color:#8291a8; }
   .prep-enemy{ font-family:'Cinzel Decorative',serif; font-size:22px; color:var(--gold-light); line-height:1.2; }
@@ -620,12 +626,16 @@
     border:1px solid rgba(255,255,255,.14); background:rgba(255,255,255,.04); color:#b9c6da; transition:all .25s ease; }
   .prep-status.partial{ border-color:rgba(232,191,95,.5); color:var(--gold-light); background:rgba(232,191,95,.08); }
   .prep-status.ok{ border-color:rgba(74,222,128,.55); color:#86efac; background:rgba(74,222,128,.1); }
+  .prep-status .prep-num{ display:block; margin-top:5px; font-size:10.5px; letter-spacing:.3px;
+    opacity:.75; font-family:'Chakra Petch',monospace; }
   .prep-countdown{ font-family:'Cinzel Decorative',serif; font-size:64px; color:var(--gold);
     text-shadow:0 0 30px rgba(232,191,95,.6); min-height:10px; line-height:1; }
   .prep-countdown:not(:empty){ animation:bannerPop .4s cubic-bezier(.34,1.56,.64,1); }
 
   /* ---------- CÂMERA: painel de teste (3 toques no cronômetro) ---------- */
-  .debug-panel{ position:absolute; top:64px; left:14px; z-index:11; max-width:64%;
+  /* z-index acima do .prep-overlay (12): o painel serve JUSTAMENTE para
+     diagnosticar a fase de enquadramento — ficar por baixo dela o inutilizava. */
+  .debug-panel{ position:absolute; top:64px; left:14px; z-index:14; max-width:64%;
     font-family:'Chakra Petch',monospace; font-size:10.5px; line-height:1.65; color:#86efac;
     background:rgba(5,10,20,.82); border:1px solid rgba(134,239,172,.3); border-radius:10px; padding:9px 11px; }
 
@@ -1065,6 +1075,10 @@
         <div class="prep-error" id="prepError" style="display:none;"></div>
         <div class="prep-loading" id="prepLoading" style="display:none;">Carregando reconhecimento corporal…</div>
         <div class="prep-status" id="prepStatus" style="display:none;">Procurando você…</div>
+        <!-- Escotilha de emergência: aparece só depois de alguns segundos preso no
+             enquadramento. Baixa a confiança mínima SEM sair da tela — antes o
+             jogador tinha que voltar ao menu e achar "ajustar sensibilidade". -->
+        <button class="prep-fix" id="prepFixBtn" style="display:none;">🔧 Não estou sendo detectado</button>
         <div class="prep-ajuste">
           Os pontos e linhas mostram o que a câmera está reconhecendo.<br>
           Não detectou direito? Toque em <b>◀ VOLTAR</b> e use
@@ -3293,12 +3307,34 @@
   // 🧍 ENQUADRAMENTO — o app orienta o jogador em vez de presumir
   // que ele sabe posicionar o celular.
   // ═══════════════════════════════════════════════════════════════
+  // Além do veredito, devolve os NÚMEROS que o produziram: quantos pontos
+  // passaram da confiança mínima e qual foi o MELHOR sinal recebido. Sem eles
+  // "Procurando você…" é um beco sem saída — não dá para distinguir "falta
+  // corpo no quadro" de "o mínimo exigido está alto demais para esta câmera".
   function checkFraming(pose, required, MIN_SCORE){
-    if(!pose) return { ok:false, level:'none', msg:'Procurando você… fique visível para a câmera.' };
+    if(!pose) return { ok:false, level:'none', seen:0, total:required.length, best:0, alvo:0,
+                       msg:'Procurando você… fique visível para a câmera.' };
+    const scores  = required.map(n => { const p = kp(pose,n); return (p && p.score) || 0; });
     const visible = required.filter(n => { const p = kp(pose,n); return p && p.score > MIN_SCORE; });
-    const ratio = visible.length / required.length;
-    if(ratio === 0) return { ok:false, level:'none', msg:'Procurando você… fique visível para a câmera.' };
-    if(ratio < 0.75) return { ok:false, level:'partial', msg:'⚠️ Corpo parcialmente fora do quadro — afaste o celular.' };
+    const ratio   = visible.length / required.length;
+
+    // "alvo" é a confiança mínima que FARIA este quadro passar: como basta 75%
+    // dos pontos, é a nota do 6º melhor (de 8), não a do melhor. Mirar no melhor
+    // baixaria a régua sem destravar nada — o gargalo é sempre o último que entra.
+    const ordenados = scores.slice().sort((a,b)=> b-a);
+    const precisa   = Math.ceil(required.length * 0.75);
+    const alvo      = ordenados[precisa-1] || 0;
+    // Os pontos existem e só não alcançam a régua? Então o problema é sinal, não
+    // enquadramento — e mandar "afaste o celular" só faria o jogador piorar.
+    const sinalFraco = alvo >= 0.08;
+    const diag = { seen:visible.length, total:required.length, best:ordenados[0] || 0, alvo:alvo };
+    const veredito = (o) => Object.assign(o, diag);
+    const MSG_FRACO = '⚠️ Sinal fraco — mais luz no corpo, ou exija menos confiança.';
+
+    if(ratio === 0)  return veredito({ ok:false, level:'none',
+                       msg: sinalFraco ? MSG_FRACO : 'Procurando você… fique visível para a câmera.' });
+    if(ratio < 0.75) return veredito({ ok:false, level:'partial',
+                       msg: sinalFraco ? MSG_FRACO : '⚠️ Corpo parcialmente fora do quadro — afaste o celular.' });
 
     // corpo muito próximo/cortado nas bordas?
     const pts = visible.map(n=>kp(pose,n));
@@ -3307,8 +3343,8 @@
     const margin = 0.02;
     const cortado = Math.min(...xs) < w*margin || Math.max(...xs) > w*(1-margin) ||
                     Math.min(...ys) < h*margin || Math.max(...ys) > h*(1-margin);
-    if(cortado && ratio < 1) return { ok:false, level:'partial', msg:'⚠️ Parte do corpo está cortada — afaste o celular.' };
-    return { ok:true, level:'ok', msg:'✓ Posição adequada' };
+    if(cortado && ratio < 1) return veredito({ ok:false, level:'partial', msg:'⚠️ Parte do corpo está cortada — afaste o celular.' });
+    return veredito({ ok:true, level:'ok', msg:'✓ Posição adequada' });
   }
 
   // ═══════════════════════════════════════════════════════════════
@@ -3708,21 +3744,31 @@
 
   // -------- modo debug (some por padrão; toque no cronômetro 3× p/ abrir) --------
   const DEBUG = { on:false, frames:0, fps:0, lastFpsT:0, lines:[] };
+  // Estado bruto da câmera e do modelo. Existe para responder, no aparelho do
+  // jogador, a pergunta que travou o diagnóstico: o reconhecimento está rodando
+  // e devolvendo sinal fraco, ou não está rodando de jeito nenhum?
+  const CAM = { poses:0, vw:0, vh:0, erros:0, erroMsg:'' };
   function debugLog(msg){
     DEBUG.lines.unshift(msg); DEBUG.lines = DEBUG.lines.slice(0,4);
   }
   function renderDebug(reading, framing){
     if(!DEBUG.on) return;
+    const th = profile.thresholds[selectedExercise] || {};
+    const backend = (typeof tf !== 'undefined' && tf.getBackend) ? (tf.getBackend() || '?') : 'sem tf';
     const d = $('debugPanel');
     d.innerHTML = `<b>DEBUG</b> · ${DEBUG.fps} fps · ${selectedExercise}<br>` +
+      `backend ${backend} · vídeo ${CAM.vw}×${CAM.vh} · poses ${CAM.poses}<br>` +
+      `pontos ${framing.seen||0}/${framing.total||0} · melhor ${Math.round((framing.best||0)*100)}%` +
+      ` · mín ${Math.round((th.minScore||0)*100)}% · bastaria ${Math.round((framing.alvo||0)*100)}%<br>` +
       `ângulo ${reading?Math.round(reading.value)+'°':'--'} · conf ${reading?reading.confidence.toFixed(2):'--'}<br>` +
       `estado <b>${reading?reading.state:'--'}</b> · forma ${reading? (reading.formOK?'ok':'✗') : '--'}<br>` +
       `enquadramento ${framing.level} · descartadas ${activeDetector?activeDetector.rejections:0}<br>` +
+      (CAM.erroMsg ? `<span style="color:#f87171">erro(${CAM.erros}) ${CAM.erroMsg}</span><br>` : '') +
       `HP inimigo ${Math.round(Battle.enemyHP)} · seu HP ${Battle.playerHP}<br>` +
       DEBUG.lines.join('<br>');
   }
   let debugTaps = 0, debugTapT = 0;
-  $('timerBadge').addEventListener('click', ()=>{
+  function alternarDebug(){
     const now = Date.now();
     debugTaps = (now - debugTapT < 600) ? debugTaps+1 : 1;
     debugTapT = now;
@@ -3730,7 +3776,12 @@
       DEBUG.on = !DEBUG.on; debugTaps = 0;
       $('debugPanel').style.display = DEBUG.on ? 'block' : 'none';
     }
-  });
+  }
+  // O cronômetro fica ATRÁS do painel de preparação — durante o enquadramento,
+  // que é justamente quando o diagnóstico importa, ele não recebe toque nenhum.
+  // O balão de status está por cima e serve de segunda entrada.
+  $('timerBadge').addEventListener('click', alternarDebug);
+  $('prepStatus').addEventListener('click', alternarDebug);
 
   // ---------------------------------------------------------------
   // LOOP DE BATALHA — pose estimation com FPS controlado
@@ -3748,9 +3799,23 @@
     if(!video.videoWidth){ rafId = requestAnimationFrame(trainingLoop); return; }
 
     let poses = [];
-    try{ poses = await detector.estimatePoses(video, {flipHorizontal:false}); }
-    catch(e){ rafId = requestAnimationFrame(trainingLoop); return; }
+    // ⚠️ Este erro já foi engolido em silêncio, e o sintoma era a tela travada
+    // em "Procurando você…" para sempre — sem nenhuma pista do motivo. Agora ele
+    // é contado e, se insistir, aparece para o jogador e no painel de teste.
+    try{
+      poses = await detector.estimatePoses(video, {flipHorizontal:false});
+      CAM.erros = 0;
+    }catch(e){
+      CAM.erros++; CAM.erroMsg = String((e && e.message) || e).slice(0,120);
+      if(CAM.erros >= 5 && !Battle.started)
+        updatePrepStatus({ ok:false, level:'partial', seen:0, total:0, best:0, alvo:0,
+                           msg:'Falha no reconhecimento corporal: ' + CAM.erroMsg });
+      renderDebug(null, { level:'erro', seen:0, total:0, best:0, alvo:0 });
+      rafId = requestAnimationFrame(trainingLoop); return;
+    }
     if(!running) return;   // a tela pode ter sido fechada durante o await
+    CAM.poses = poses.length;
+    CAM.vw = video.videoWidth; CAM.vh = video.videoHeight;
 
     // contador de FPS para o modo debug
     DEBUG.frames++;
@@ -3758,7 +3823,7 @@
 
     const th = profile.thresholds[selectedExercise];
     const sx=canvas.width/video.videoWidth, sy=canvas.height/video.videoHeight;
-    let reading = null, framing = { ok:false, level:'none', msg:'Procurando você…' };
+    let reading = null, framing = { ok:false, level:'none', seen:0, total:0, best:0, alvo:0, msg:'Procurando você…' };
 
     if(poses.length>0){
       const pose = poses[0];
@@ -3788,20 +3853,60 @@
   // ---------------------------------------------------------------
   // 🎯 PREPARAÇÃO — a batalha só começa quando o corpo está enquadrado
   // ---------------------------------------------------------------
-  let prepOkFrames = 0, prepCountdownId = null;
+  let prepOkFrames = 0, prepCountdownId = null, prepTravadoT = 0;
+  const PREP_ESCOTILHA_MS = 7000;   // tempo preso no enquadramento até oferecer ajuda
+  let ultimoFraming = null;
+
   function updatePrepStatus(framing){
     const badge = $('prepStatus');
     if(!badge) return;
-    badge.textContent = framing.msg;
+    ultimoFraming = framing;
+    const th = profile.thresholds[selectedExercise];
+    // Mostra o placar do reconhecimento junto do aviso: "3 de 8 pontos · melhor
+    // sinal 22% · mínimo 35%" diz de cara o que ajustar — corpo ou sensibilidade.
+    const detalhe = framing.total
+      ? `<span class="prep-num">${framing.seen} de ${framing.total} pontos · melhor sinal `
+        + `${Math.round(framing.best*100)}% · mínimo ${Math.round(th.minScore*100)}%`
+        + (framing.ok ? '' : ` · bastaria ${Math.round(framing.alvo*100)}%`) + `</span>`
+      : '';
+    badge.innerHTML = framing.msg + detalhe;
     badge.className = 'prep-status ' + framing.level;
+
     if(framing.ok){
+      prepTravadoT = 0;
+      $('prepFixBtn').style.display = 'none';
       prepOkFrames++;
       if(prepOkFrames >= 8 && !prepCountdownId) startCountdown();   // corpo estável → conta pra começar
     } else {
       prepOkFrames = 0;
       if(prepCountdownId){ clearInterval(prepCountdownId); prepCountdownId=null; $('prepCountdown').textContent=''; }
+      if(!prepTravadoT) prepTravadoT = Date.now();
+      if(Date.now() - prepTravadoT > PREP_ESCOTILHA_MS) $('prepFixBtn').style.display = 'inline-flex';
     }
   }
+
+  // 🔧 Escotilha: baixa a confiança mínima até um pouco abaixo do melhor sinal
+  // que a câmera está realmente entregando. É o mesmo ajuste da tela de
+  // sensibilidade, só que sem sair do lugar — quem está travado não precisa
+  // adivinhar o número certo.
+  $('prepFixBtn').addEventListener('click', async ()=>{
+    const th = profile.thresholds[selectedExercise];
+    // desce logo ABAIXO da nota que faltava para o enquadramento fechar
+    const alvo = (ultimoFraming && ultimoFraming.alvo > 0.02)
+      ? ultimoFraming.alvo - 0.02
+      : th.minScore - 0.10;                // sem leitura nenhuma: passo fixo
+    const novo = Math.max(0.10, Math.min(th.minScore - 0.03, alvo));
+    if(novo >= th.minScore - 0.001){       // já no piso do slider (10%)
+      floatingText('JÁ ESTÁ NO MÍNIMO', '#f87171', 30);
+      return;
+    }
+    th.minScore = Math.round(novo*100)/100;
+    await saveProfile();
+    prepTravadoT = 0;
+    $('prepFixBtn').style.display = 'none';
+    floatingText('SENSIBILIDADE ' + Math.round(th.minScore*100) + '%', 'var(--gold)', 30);
+    if(navigator.vibrate) navigator.vibrate(30);
+  });
   function startCountdown(){
     let n = 3;
     $('prepCountdown').textContent = n;
@@ -3828,6 +3933,7 @@
     ov.classList.add('show');
     $('prepError').style.display = phase==='error' ? 'block' : 'none';
     $('prepError').textContent = msg || '';
+    prepTravadoT = 0; $('prepFixBtn').style.display = 'none';   // escotilha recomeça a cada fase
     $('prepActivateBtn').style.display = (phase==='intro' || phase==='error') ? 'inline-flex' : 'none';
     $('prepActivateBtn').textContent = phase==='error' ? 'TENTAR NOVAMENTE' : 'ATIVAR CÂMERA';
     $('prepLoading').style.display = phase==='loading' ? 'block' : 'none';
@@ -4008,7 +4114,18 @@
   async function sensLoop(){
     if(!sensRunning) return;
     const video=$('video2'), canvas=$('skeleton2'), ctx=canvas.getContext('2d');
-    const poses = await detector.estimatePoses(video, {flipHorizontal:false});
+    if(!video.videoWidth){ sensRaf = requestAnimationFrame(sensLoop); return; }
+    // Sem este try o primeiro erro do modelo derrubava o loop de vez: o ângulo
+    // ficava em "--" para sempre e parecia falta de detecção, não uma falha.
+    let poses = [];
+    try{ poses = await detector.estimatePoses(video, {flipHorizontal:false}); }
+    catch(e){
+      $('sensValue').textContent='--';
+      $('sensZone').className='sens-zone down';
+      $('sensZone').textContent='falha: ' + String((e && e.message) || e).slice(0,60);
+      sensRaf = requestAnimationFrame(sensLoop); return;
+    }
+    if(!sensRunning) return;
     const sx=canvas.width/video.videoWidth, sy=canvas.height/video.videoHeight;
     const MIN_SCORE = parseInt($('confSlider').value)/100;
 
@@ -4035,8 +4152,11 @@
     showScreen('sensibilidade');
     sensExercise = selectedExercise;
     renderSensExerciseRow(); loadSensSliders();
-    try{ await ensureModel(); await openCamera($('video2')); fitCanvas($('skeleton2'), $('video2')); }
-    catch(err){ alert('Não foi possível acessar a câmera.\n'+err.message); showScreen('menu'); return; }
+    // ⚠️ Mesma ordem corrigida da batalha: câmera DENTRO da janela do gesto do
+    // usuário, modelo depois. Baixar o modelo primeiro fazia o Android
+    // descartar o pedido de permissão em silêncio.
+    try{ await openCamera($('video2')); fitCanvas($('skeleton2'), $('video2')); await ensureModel(); }
+    catch(err){ alert(describeCameraError(err)); showScreen('menu'); return; }
     sensRunning=true; sensLoop();
   }
   function closeSensibilidade(){ sensRunning=false; if(sensRaf) cancelAnimationFrame(sensRaf); stopStream($('video2')); showScreen('menu'); }
