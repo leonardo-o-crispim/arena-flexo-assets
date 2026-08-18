@@ -650,9 +650,24 @@
   .prep-countdown:not(:empty){ animation:bannerPop .4s cubic-bezier(.34,1.56,.64,1); }
 
   /* ---------- CÂMERA: painel de teste (3 toques no cronômetro) ---------- */
+  /* 🔍 BOTÃO DE DIAGNÓSTICO — um toque, e pronto.
+     Ficava escondido atrás de "3 toques no cronômetro", e no celular isso
+     simplesmente não funciona: o navegador entende os dois primeiros toques
+     como duplo-toque-para-zoom e engole o terceiro. O botão vive FORA da
+     .top-nav de propósito — ela tem z-index 5 e some atrás do painel de
+     preparação (12), que é justamente quando o diagnóstico faz falta. */
+  .debug-btn{ position:absolute; top:64px; left:14px; z-index:15;
+    width:38px; height:38px; border-radius:50%; display:flex; align-items:center; justify-content:center;
+    font-size:16px; cursor:pointer; touch-action:manipulation;   /* sem espera de duplo toque */
+    background:rgba(10,20,36,.78); border:1px solid var(--gold-dim); color:var(--gold-light);
+    backdrop-filter:blur(6px); box-shadow:0 3px 10px rgba(0,0,0,.5); transition:.16s ease; }
+  .debug-btn:active{ transform:scale(.9); }
+  .debug-btn.ativo{ border-color:var(--gold); background:rgba(232,191,95,.22); }
+
   /* z-index acima do .prep-overlay (12): o painel serve JUSTAMENTE para
-     diagnosticar a fase de enquadramento — ficar por baixo dela o inutilizava. */
-  .debug-panel{ position:absolute; top:64px; left:14px; z-index:14; max-width:64%;
+     diagnosticar a fase de enquadramento — ficar por baixo dela o inutilizava.
+     Começa abaixo do botão para os dois não se sobreporem. */
+  .debug-panel{ position:absolute; top:110px; left:14px; z-index:14; max-width:64%;
     font-family:'Chakra Petch',monospace; font-size:10.5px; line-height:1.65; color:#86efac;
     background:rgba(5,10,20,.82); border:1px solid rgba(134,239,172,.3); border-radius:10px; padding:9px 11px; }
 
@@ -1056,6 +1071,7 @@
 
       <div class="calib-msg" id="calibMsg">Posicione o corpo inteiro na tela 🧍 — de lado para flexão/agachamento, de frente para polichinelo</div>
 
+      <div class="debug-btn" id="debugBtn" title="ver os números do reconhecimento">🔍</div>
       <div class="debug-panel" id="debugPanel" style="display:none;"></div>
 
       <!-- PREPARAÇÃO DA BATALHA: câmera, permissão, enquadramento e contagem -->
@@ -3974,16 +3990,20 @@
       `HP inimigo ${Math.round(Battle.enemyHP)} · seu HP ${Battle.playerHP}<br>` +
       DEBUG.lines.join('<br>');
   }
+  // um único lugar liga e desliga o painel — o botão e os 3 toques usam este
+  function mostrarDebug(on){
+    DEBUG.on = on;
+    $('debugPanel').style.display = on ? 'block' : 'none';
+    $('debugBtn').classList.toggle('ativo', on);
+  }
   let debugTaps = 0, debugTapT = 0;
   function alternarDebug(){
     const now = Date.now();
     debugTaps = (now - debugTapT < 600) ? debugTaps+1 : 1;
     debugTapT = now;
-    if(debugTaps >= 3){
-      DEBUG.on = !DEBUG.on; debugTaps = 0;
-      $('debugPanel').style.display = DEBUG.on ? 'block' : 'none';
-    }
+    if(debugTaps >= 3){ debugTaps = 0; mostrarDebug(!DEBUG.on); }
   }
+  $('debugBtn').addEventListener('click', ()=> mostrarDebug(!DEBUG.on));
   // O cronômetro fica ATRÁS do painel de preparação — durante o enquadramento,
   // que é justamente quando o diagnóstico importa, ele não recebe toque nenhum.
   // O balão de status está por cima e serve de segunda entrada.
