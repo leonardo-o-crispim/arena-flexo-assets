@@ -450,10 +450,27 @@
   .hp-track{ width:150px; height:9px; border-radius:999px; background:rgba(255,255,255,.1); border:1px solid rgba(239,68,68,.4);
     overflow:hidden; margin:6px auto 0; }
   .hp-fill{ height:100%; width:100%; background:linear-gradient(90deg,#f87171,#ef4444); transition:width .2s ease; }
-  .time-track{ width:150px; height:6px; border-radius:999px; background:rgba(255,255,255,.1); border:1px solid rgba(99,200,255,.35);
-    overflow:hidden; margin:5px auto 0; }
-  .time-fill{ height:100%; width:100%; background:linear-gradient(90deg,var(--violet),var(--magenta)); transition:width .3s linear; }
-  .time-label{ font-size:10px; letter-spacing:1.5px; color:var(--violet-bright); margin-top:3px; }
+  /* ---------- ⏳ CRONÔMETRO DA BATALHA ----------
+     Sobre a imagem da câmera, um texto fino de 10px simplesmente sumia. Agora o
+     tempo é uma barra que esvazia, com os segundos DENTRO dela: mesmo sem ler o
+     número, o quanto resta se entende de relance. Mesma largura da barra de vida
+     do inimigo, logo abaixo dela — continua parecendo a mesma peça de HUD. */
+  .time-wrap{ position:relative; width:150px; margin:6px auto 0; }
+  .time-track{ width:100%; height:14px; border-radius:999px; overflow:hidden;
+    background:rgba(6,12,22,.72); border:1px solid rgba(232,191,95,.35);
+    box-shadow:0 2px 8px rgba(0,0,0,.5), inset 0 1px 2px rgba(0,0,0,.6); }
+  /* a transição acompanha o tique de 1s, então a barra ESCORRE em vez de pular */
+  .time-fill{ height:100%; width:100%; border-radius:999px;
+    background:linear-gradient(90deg,#22c55e,#4ade80);
+    transition:width .9s linear, background .4s ease; }
+  .time-label{ position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+    font-family:'Chakra Petch',sans-serif; font-weight:700; font-size:10.5px; letter-spacing:1.2px;
+    color:#fff; text-shadow:0 1px 3px rgba(0,0,0,.95); pointer-events:none; }
+  /* no fim do tempo a moldura pulsa — urgência sem ocupar espaço novo na tela */
+  .time-wrap.urgente .time-track{ border-color:rgba(239,68,68,.75); animation:tempoPulse .9s ease-in-out infinite; }
+  @keyframes tempoPulse{
+    0%,100%{ box-shadow:0 2px 8px rgba(0,0,0,.5), inset 0 1px 2px rgba(0,0,0,.6); }
+    50%    { box-shadow:0 0 15px rgba(239,68,68,.8), inset 0 1px 2px rgba(0,0,0,.6); } }
 
   .float-pop{ position:absolute; z-index:8; font-family:'Cinzel',serif; font-weight:700; font-size:17px;
     pointer-events:none; animation:floatUp 0.9s ease-out forwards; }
@@ -1092,8 +1109,10 @@
         <div class="enemy-emoji" id="enemyEmoji"></div>
         <div class="enemy-name" id="enemyName">Ogro Recruta</div>
         <div class="hp-track"><div class="hp-fill" id="hpFill"></div></div>
-        <div class="time-track"><div class="time-fill" id="timeFill"></div></div>
-        <div class="time-label" id="timeLabel">25s</div>
+        <div class="time-wrap" id="timeWrap">
+          <div class="time-track"><div class="time-fill" id="timeFill"></div></div>
+          <div class="time-label" id="timeLabel">25s</div>
+        </div>
       </div>
 
       <div class="fury-banner" id="furyBanner"></div>
@@ -1665,7 +1684,10 @@
     flexao_frontal: {
       label:'Flexão frontal', icon:'ex_pushup', repLabel:'flexões', oculto:true,
       baseDamage:2, gold:1, tipo:'força',
-      defaults:{ down:75, up:140, minScore:0.30 },
+      // faixa larga de propósito: entre 85 e 130 cabe qualquer flexão de verdade,
+      // e o que separa repetição de tremida é a duração mínima do ciclo, não a
+      // profundidade exata. Calibrável na tela de sensibilidade como os outros.
+      defaults:{ down:85, up:130, minScore:0.25 },
       measure(pose, MIN_SCORE){ return frontalPushMeasure(pose, MIN_SCORE); }
     }
   };
@@ -1701,14 +1723,41 @@
     cabecaBaixo: 0.10, cabecaAlto: 1.45,// faixa da altura cabeça→punho ÷ largura dos ombros
     quedaBaixo: -0.15, quedaAlto: 0.75, // faixa da queda ombro→cotovelo ÷ largura dos ombros
     pesoExtensao: 0.38, pesoCotovelo: 0.24, pesoCabeca: 0.20, pesoQueda: 0.18,
-    desnivelOmbros: 0.42,               // acima disso os ombros estão tortos = corpo de lado
+    // Os ombros são a RÉGUA: sem eles não há leitura nenhuma. Por isso entram com
+    // uma exigência própria, mais baixa que a do resto — cobrar deles a mesma nota
+    // dos punhos era o que devolvia "sem leitura" e travava a máquina de estados.
+    pisoOmbros: 0.15,
+  };
+
+  // 🩹 O modo frontal é o mais sujeito a piscadas: de frente as mãos somem
+  // debaixo do corpo e o rastreamento oscila. Estes números existem para o
+  // algoritmo ATRAVESSAR essas piscadas em vez de reagir a cada uma delas.
+  const FRONTAL_ROBUSTEZ = {
+    suavizacao: 0.35,   // peso do valor novo na média móvel — quanto menor, mais estável
+    memoriaMs: 1200,    // por quanto tempo o último valor bom sobrevive a um sumiço
+    minCicloMs: 500,    // ciclo mais curto que isso é tremida, não flexão
+    cooldownMs: 250,    // respiro entre uma repetição e a próxima
+    // 📏 Gatilhos em PORCENTAGEM da amplitude que o jogador está realmente
+    // fazendo, não em graus absolutos: a faixa medida muda com o corpo, com a
+    // altura do celular e com a distância, e nenhum número fixo serve para
+    // todos. Basta passar da metade para estar "embaixo" e voltar a 3/4 para
+    // estar "em cima" — quem separa repetição de oscilação é a zona morta entre
+    // os dois, não a profundidade exigida.
+    fracaoDescida: 0.45,
+    fracaoSubida: 0.75,
+    // Piso de amplitude: abaixo disso o corpo está parado. Medido, não chutado —
+    // com a média móvel ligada, tremer a câmera em ±12px produz amplitude ~0,
+    // então 6 já fica muito acima do ruído e ainda deixa passar meia flexão.
+    amplitudeMin: 6,
+    decaimento: 0.005,  // o envelope esquece extremos antigos devagar
   };
   function faixa01(v, lo, hi){ return Math.max(0, Math.min(1, (v - lo) / (hi - lo))); }
 
   function frontalPushMeasure(pose, MIN_SCORE){
     const F = FRONTAL_PUSHUP, bom = p => p && p.score > MIN_SCORE;
+    const ombroOK = p => p && p.score > Math.min(MIN_SCORE, F.pisoOmbros);
     const ls = kp(pose,'left_shoulder'), rs = kp(pose,'right_shoulder');
-    if(!bom(ls) || !bom(rs)) return null;                 // sem ombros não há régua
+    if(!ombroOK(ls) || !ombroOK(rs)) return null;         // sem ombros não há régua
     const largura = Math.hypot(ls.x - rs.x, ls.y - rs.y);
     if(largura < 1) return null;
     const ombroY = (ls.y + rs.y) / 2;
@@ -1879,7 +1928,7 @@
     },
     flexao_frontal: {
       art:'pose_flexao_frontal', imagem:'',
-      dica:'Fique <b>de frente</b> para a câmera, com o celular no chão à sua frente.<br>Cabeça, ombros e mãos precisam aparecer no quadro.'
+      dica:'Fique <b>de frente</b> para a câmera, com o celular no chão à sua frente.<br>Bastam <b>cabeça e ombros</b> no quadro — as mãos podem sumir.'
     },
     agachamento: {
       art:'pose_agachamento', imagem:'',
@@ -2413,6 +2462,18 @@
     if(!loaded) return clone(DEFAULT_PROFILE);
     const p = Object.assign(clone(DEFAULT_PROFILE), loaded);
     p.thresholds = Object.assign(thresholdDefaults(), loaded.thresholds || {});
+
+    // 🤳 Re-semeadura do modo frontal. Os limiares originais (75/140) saíram de
+    // um cálculo geométrico e nunca tinham passado por um corpo real — na
+    // prática a batalha não começava. Um save antigo carrega esses números para
+    // sempre, porque o valor salvo vence o padrão. Então trocamos, UMA vez, e
+    // só para quem ainda está exatamente no valor de fábrica: quem calibrou na
+    // tela de sensibilidade mantém o que escolheu.
+    const tf = p.thresholds.flexao_frontal, novoF = EXERCISES.flexao_frontal.defaults;
+    if(tf){
+      if(tf.down === 75 && tf.up === 140){ tf.down = novoF.down; tf.up = novoF.up; }
+      if(tf.minScore === 0.30) tf.minScore = novoF.minScore;
+    }
     p.equipped   = Object.assign({}, DEFAULT_PROFILE.equipped, loaded.equipped || {});
     p.owned      = Array.from(new Set([...(loaded.owned || []), ...DEFAULT_PROFILE.owned]));
 
@@ -3311,18 +3372,20 @@
   // passaram da confiança mínima e qual foi o MELHOR sinal recebido. Sem eles
   // "Procurando você…" é um beco sem saída — não dá para distinguir "falta
   // corpo no quadro" de "o mínimo exigido está alto demais para esta câmera".
-  function checkFraming(pose, required, MIN_SCORE){
+  function checkFraming(pose, exerciseId, MIN_SCORE){
+    const required = REQUIRED_KEYPOINTS[exerciseId] || [];
+    const regra    = framingRule(exerciseId);
     if(!pose) return { ok:false, level:'none', seen:0, total:required.length, best:0, alvo:0,
                        msg:'Procurando você… fique visível para a câmera.' };
     const scores  = required.map(n => { const p = kp(pose,n); return (p && p.score) || 0; });
     const visible = required.filter(n => { const p = kp(pose,n); return p && p.score > MIN_SCORE; });
     const ratio   = visible.length / required.length;
 
-    // "alvo" é a confiança mínima que FARIA este quadro passar: como basta 75%
-    // dos pontos, é a nota do 6º melhor (de 8), não a do melhor. Mirar no melhor
-    // baixaria a régua sem destravar nada — o gargalo é sempre o último que entra.
+    // "alvo" é a confiança mínima que FARIA este quadro passar: como basta uma
+    // FRAÇÃO dos pontos, é a nota do último que entra na conta, não a do melhor.
+    // Mirar no melhor baixaria a régua sem destravar nada.
     const ordenados = scores.slice().sort((a,b)=> b-a);
-    const precisa   = Math.ceil(required.length * 0.75);
+    const precisa   = Math.max(1, Math.ceil(required.length * regra.minRatio));
     const alvo      = ordenados[precisa-1] || 0;
     // Os pontos existem e só não alcançam a régua? Então o problema é sinal, não
     // enquadramento — e mandar "afaste o celular" só faria o jogador piorar.
@@ -3331,10 +3394,10 @@
     const veredito = (o) => Object.assign(o, diag);
     const MSG_FRACO = '⚠️ Sinal fraco — mais luz no corpo, ou exija menos confiança.';
 
-    if(ratio === 0)  return veredito({ ok:false, level:'none',
-                       msg: sinalFraco ? MSG_FRACO : 'Procurando você… fique visível para a câmera.' });
-    if(ratio < 0.75) return veredito({ ok:false, level:'partial',
-                       msg: sinalFraco ? MSG_FRACO : '⚠️ Corpo parcialmente fora do quadro — afaste o celular.' });
+    if(ratio === 0)             return veredito({ ok:false, level:'none',
+                                  msg: sinalFraco ? MSG_FRACO : 'Procurando você… fique visível para a câmera.' });
+    if(ratio < regra.minRatio)  return veredito({ ok:false, level:'partial',
+                                  msg: sinalFraco ? MSG_FRACO : '⚠️ Corpo parcialmente fora do quadro — afaste o celular.' });
 
     // corpo muito próximo/cortado nas bordas?
     const pts = visible.map(n=>kp(pose,n));
@@ -3343,9 +3406,29 @@
     const margin = 0.02;
     const cortado = Math.min(...xs) < w*margin || Math.max(...xs) > w*(1-margin) ||
                     Math.min(...ys) < h*margin || Math.max(...ys) > h*(1-margin);
-    if(cortado && ratio < 1) return veredito({ ok:false, level:'partial', msg:'⚠️ Parte do corpo está cortada — afaste o celular.' });
+    if(regra.checarBordas && cortado && ratio < 1)
+      return veredito({ ok:false, level:'partial', msg:'⚠️ Parte do corpo está cortada — afaste o celular.' });
     return veredito({ ok:true, level:'ok', msg:'✓ Posição adequada' });
   }
+
+  // ═══════════════════════════════════════════════════════════════
+  // 🩹 ESTABILIDADE DO VEREDITO
+  // O rastreamento pisca: um quadro isolado sem pontos suficientes não pode
+  // desfazer o que vinte quadros bons construíram. Aqui o último veredito BOM
+  // sobrevive por um instante, e o jogador para de ser mandado se reposicionar
+  // por causa de uma oscilação que ele nem viu acontecer.
+  // Memória 0 = desligado, e é o que os outros exercícios usam.
+  // ═══════════════════════════════════════════════════════════════
+  const Estabilidade = {
+    tOK: 0, ultimo: null,
+    filtrar(framing, memoriaMs, agora){
+      if(framing.ok){ this.tOK = agora; this.ultimo = framing; return framing; }
+      if(memoriaMs > 0 && this.ultimo && agora - this.tOK < memoriaMs)
+        return Object.assign({}, framing, { ok:true, level:'ok', msg:this.ultimo.msg });
+      return framing;
+    },
+    reset(){ this.tOK = 0; this.ultimo = null; }
+  };
 
   // ═══════════════════════════════════════════════════════════════
   // 🏋️ DETECTOR DE EXERCÍCIOS — máquina de estados
@@ -3463,16 +3546,104 @@
       return torso.value > 55;
     }
   }
-  // FLEXÃO FRONTAL — a validação de forma aqui confirma que o jogador está mesmo
-  // DE FRENTE: ombros nivelados. Se o corpo girar de lado, a leitura frontal perde
-  // sentido e o ciclo é descartado em vez de contar repetição errada.
+  // ═══════════════════════════════════════════════════════════════
+  // 🤳 FLEXÃO FRONTAL — máquina de DOIS estados, de propósito.
+  //
+  // O ciclo de quatro fases do detector padrão (descer → segurar embaixo →
+  // subir → chegar em cima) tem quatro pontos onde a repetição pode ser
+  // descartada, e de frente ela era descartada quase sempre. Aqui sobra o
+  // essencial que o jogador reconhece:
+  //
+  //        EM CIMA  ──passou da metade da amplitude──▶  EMBAIXO
+  //        EM CIMA  ◀──voltou a 3/4 da amplitude─────  EMBAIXO  → +1 repetição
+  //
+  // Os dois gatilhos são distantes um do outro (histerese): o valor precisa
+  // ATRAVESSAR a zona morta do meio para trocar de estado, então oscilar em
+  // volta de um deles não gera repetição nenhuma. E os dois são frações da
+  // amplitude MEDIDA, não graus fixos — o detector se ajusta ao que o jogador
+  // está fazendo. O único outro filtro é a duração mínima do ciclo: é ele que
+  // separa flexão de tremida, não a postura.
+  //
+  // Nada de validação de forma: ombro torto, profundidade irregular e corpo
+  // levemente girado contam do mesmo jeito. Nesta fase vale mais contar uma
+  // flexão torta do que perder uma flexão boa.
+  // ═══════════════════════════════════════════════════════════════
   class FrontalPushUpDetector extends ExerciseDetector {
-    validateForm(pose, MIN_SCORE){
-      const ls = kp(pose,'left_shoulder'), rs = kp(pose,'right_shoulder');
-      if(!ls || !rs || ls.score <= MIN_SCORE || rs.score <= MIN_SCORE) return true;  // sem dados, não penaliza
-      const largura = Math.hypot(ls.x - rs.x, ls.y - rs.y);
-      if(largura < 1) return true;
-      return Math.abs(ls.y - rs.y) / largura < FRONTAL_PUSHUP.desnivelOmbros;
+    reset(){
+      super.reset();
+      this.state = 'READY';      // vocabulário do HUD: READY = em cima ("DESÇA")
+      this.suave = null;         // média móvel do valor medido
+      this.tUltimoBom = 0;       // quando a última leitura válida chegou
+      this.tDescida = 0;         // início do ciclo atual
+      this.tSaiuDoTopo = 0;      // instante em que o corpo começou a descer
+      // Envelope da amplitude: começa VAZIO de propósito. Semeá-lo com os
+      // limiares salvos parecia inofensivo e não era — se a faixa real do corpo
+      // cair longe do palpite, os gatilhos ficam no lugar errado por segundos e
+      // as primeiras flexões se perdem. Sem semente não há palpite errado:
+      // a primeira descida já ensina a faixa, e a trava de amplitude mínima
+      // garante que nada seja contado antes disso.
+      this.vMin = null; this.vMax = null;
+      this.gatilhos = { baixo:0, alto:0, amplitude:0 };
+    }
+
+    update(pose, now){
+      const th = this.thresholds;
+      const R = FRONTAL_ROBUSTEZ;
+      const m = this.def.measure(pose, th.minScore);
+
+      if(m){
+        // média móvel: um quadro ruim isolado desloca pouco o valor
+        this.suave = (this.suave === null) ? m.value : this.suave + (m.value - this.suave) * R.suavizacao;
+        this.lastConfidence = m.confidence;
+        this.tUltimoBom = now;
+      } else if(this.suave === null || now - this.tUltimoBom > R.memoriaMs){
+        this.lastValue = null; return null;      // sumiu de vez: aí sim, sem leitura
+      }
+      // entre um caso e outro: a leitura sumiu HÁ POUCO e o último valor
+      // continua valendo. É o que impede o ciclo de se perder numa piscada.
+
+      const v = this.suave;
+      this.lastValue = v;
+      const prev = this.state;
+
+      // Envelope adaptativo: encosta na hora num extremo novo e esquece os
+      // antigos devagar. É o que faz o mesmo código servir para qualquer corpo,
+      // qualquer altura de celular e qualquer distância, sem calibração.
+      this.vMin = (this.vMin === null) ? v : Math.min(v, this.vMin + (v - this.vMin) * R.decaimento);
+      this.vMax = (this.vMax === null) ? v : Math.max(v, this.vMax + (v - this.vMax) * R.decaimento);
+      const amplitude = this.vMax - this.vMin;
+      const baixo = this.vMin + amplitude * R.fracaoDescida;
+      const alto  = this.vMin + amplitude * R.fracaoSubida;
+      this.gatilhos = { baixo, alto, amplitude };
+
+      if(this.state === 'READY'){
+        // O ciclo começa quando o corpo SAI DO TOPO, não quando chega embaixo.
+        // Cronometrar só a partir do fundo media a subida sozinha, e flexões
+        // boas eram descartadas como "rápidas demais".
+        if(amplitude >= R.amplitudeMin && v < alto){ if(!this.tSaiuDoTopo) this.tSaiuDoTopo = now; }
+        else this.tSaiuDoTopo = 0;
+
+        if(amplitude >= R.amplitudeMin && v < baixo && now - this.tLastRep > R.cooldownMs){
+          this.state = 'BOTTOM';                 // vocabulário do HUD: BOTTOM = embaixo ("SUBA")
+          this.tDescida = this.tSaiuDoTopo || now;
+          this.tSaiuDoTopo = 0;
+        }
+      } else if(v > alto){
+        const dur = now - this.tDescida;
+        this.state = 'READY';
+        if(dur >= R.minCicloMs){
+          this.reps++; this.tLastRep = now;
+          Events.emit(EVT.COMPLETED, {
+            type: EVT.COMPLETED, exercise:this.id, repetition:this.reps,
+            confidence: Number((this.lastConfidence || 0).toFixed(2)), durationMs: dur
+          });
+        } else {
+          this.rejections++;
+          Events.emit(EVT.INVALID, { reason:'movimento rápido demais' });
+        }
+      }
+      if(prev !== this.state) Events.emit(EVT.STATE, { state:this.state, exercise:this.id });
+      return { value:v, confidence:this.lastConfidence || 0, state:this.state, formOK:true };
     }
   }
   class JumpingJackDetector extends ExerciseDetector {}
@@ -3487,11 +3658,36 @@
   }
   const REQUIRED_KEYPOINTS = {
     flexao:      ['left_shoulder','right_shoulder','left_elbow','right_elbow','left_wrist','right_wrist','left_hip','right_hip'],
-    // de frente o quadril fica atrás do corpo e some: exigi-lo travaria o enquadramento
-    flexao_frontal: ['nose','left_shoulder','right_shoulder','left_elbow','right_elbow','left_wrist','right_wrist'],
+    // 🤳 TRÊS pontos, e só. De frente, o quadril fica atrás do corpo, as mãos
+    // somem debaixo dele e os cotovelos apontam para a câmera — pedir sete
+    // pontos era pedir justamente os que a pose frontal esconde. Cabeça e os
+    // dois ombros são os que sempre aparecem, e são exatamente os que a medida
+    // precisa: os ombros dão a régua e o centro, o nariz dá a altura.
+    flexao_frontal: ['nose','left_shoulder','right_shoulder'],
     agachamento: ['left_hip','right_hip','left_knee','right_knee','left_ankle','right_ankle','left_shoulder','right_shoulder'],
     polichinelo: ['left_shoulder','right_shoulder','left_wrist','right_wrist','left_hip','right_hip','left_ankle','right_ankle'],
   };
+
+  // Quanto cada exercício exige do enquadramento antes de deixar a batalha
+  // começar. Tudo o que era número fixo dentro da lógica virou linha aqui —
+  // o modo frontal é o tolerante, os outros seguem exatamente como estavam.
+  const FRAMING_RULES = {
+    padrao: {
+      minRatio: 0.75,          // fração dos pontos que precisa passar da confiança
+      checarBordas: true,      // reclamar quando o corpo encosta na borda do quadro
+      framesParaIniciar: 8,    // quadros bons seguidos antes da contagem
+      travaContagem: false,    // contagem começada pode ser cancelada
+      memoriaMs: 0,            // por quanto tempo um veredito bom sobrevive a um quadro ruim
+    },
+    flexao_frontal: {
+      minRatio: 0.60,          // 2 dos 3 pontos bastam
+      checarBordas: false,     // de frente, braços e pernas encostam nas bordas e está tudo certo
+      framesParaIniciar: 3,    // reconheceu, começa
+      travaContagem: true,     // ⛔ começou a contar, não volta atrás
+      memoriaMs: 1200,
+    },
+  };
+  const framingRule = id => FRAMING_RULES[id] || FRAMING_RULES.padrao;
 
   // ---------------------------------------------------------------
   // ⚔️ BATALHA — o exercício É o ataque.
@@ -3570,13 +3766,20 @@
     if(Battle.atkId){ clearInterval(Battle.atkId); Battle.atkId=null; }
   }
 
+  // ⏳ Faixas do cronômetro, da mais cheia para a mais vazia — a cor sozinha já
+  // diz em que pé está a batalha. Mudar a urgência = mexer aqui, não na lógica.
+  const FAIXAS_TEMPO = [
+    { min:0.50, cor:'linear-gradient(90deg,#22c55e,#4ade80)', classe:'' },         // cheio  → verde
+    { min:0.25, cor:'linear-gradient(90deg,#f59e0b,#facc15)', classe:'atencao' },  // metade → amarelo
+    { min:0,    cor:'linear-gradient(90deg,#ef4444,#f87171)', classe:'urgente' },  // final  → vermelho
+  ];
   function updateTimeUI(){
-    const pct = Battle.timeLimit>0 ? Math.max(0,(Battle.timeLeft/Battle.timeLimit)*100) : 0;
-    $('timeFill').style.width = pct+'%';
+    const frac  = Battle.timeLimit>0 ? Math.max(0, Battle.timeLeft/Battle.timeLimit) : 0;
+    const faixa = FAIXAS_TEMPO.find(f => frac >= f.min) || FAIXAS_TEMPO[FAIXAS_TEMPO.length-1];
+    $('timeFill').style.width = (frac*100)+'%';
+    $('timeFill').style.background = faixa.cor;
     $('timeLabel').textContent = Math.max(0,Battle.timeLeft) + 's';
-    $('timeFill').style.background = Battle.timeLeft<=8
-      ? 'linear-gradient(90deg,#ef4444,#f87171)'
-      : 'linear-gradient(90deg,var(--gold),#f5d789)';
+    $('timeWrap').className = 'time-wrap ' + faixa.classe;
   }
   function updatePlayerHpUI(){
     const max = Player.maxHealth();
@@ -3762,6 +3965,10 @@
       ` · mín ${Math.round((th.minScore||0)*100)}% · bastaria ${Math.round((framing.alvo||0)*100)}%<br>` +
       `ângulo ${reading?Math.round(reading.value)+'°':'--'} · conf ${reading?reading.confidence.toFixed(2):'--'}<br>` +
       `estado <b>${reading?reading.state:'--'}</b> · forma ${reading? (reading.formOK?'ok':'✗') : '--'}<br>` +
+      (activeDetector && activeDetector.gatilhos
+        ? `faixa ${Math.round(activeDetector.vMin||0)}–${Math.round(activeDetector.vMax||0)}` +
+          ` · gatilhos ${Math.round(activeDetector.gatilhos.baixo)}/${Math.round(activeDetector.gatilhos.alto)}<br>`
+        : '') +
       `enquadramento ${framing.level} · descartadas ${activeDetector?activeDetector.rejections:0}<br>` +
       (CAM.erroMsg ? `<span style="color:#f87171">erro(${CAM.erros}) ${CAM.erroMsg}</span><br>` : '') +
       `HP inimigo ${Math.round(Battle.enemyHP)} · seu HP ${Battle.playerHP}<br>` +
@@ -3830,7 +4037,8 @@
       pose.__vw = video.videoWidth; pose.__vh = video.videoHeight;
       frameCounter++;
       if(frameCounter % PERF.skeletonEveryNFrames === 0) drawSkeleton(ctx, canvas, pose, sx, sy, th.minScore);
-      framing = checkFraming(pose, REQUIRED_KEYPOINTS[selectedExercise], th.minScore);
+      framing = Estabilidade.filtrar(checkFraming(pose, selectedExercise, th.minScore),
+                                     framingRule(selectedExercise).memoriaMs, now);
 
       if(!Battle.started){
         updatePrepStatus(framing);            // ainda na calibração: só orienta o posicionamento
@@ -3841,9 +4049,15 @@
         if(!framing.ok) $('calibMsg').textContent = framing.msg;
       }
     } else {
+      // Nenhuma pose no quadro passa pelo MESMO filtro: uma piscada do modelo não
+      // pode acender o aviso de "some do quadro" em cima de quem está lá.
+      framing = Estabilidade.filtrar(framing, framingRule(selectedExercise).memoriaMs, now);
       ctx.clearRect(0,0,canvas.width,canvas.height);
       if(!Battle.started) updatePrepStatus(framing);
-      else { $('calibMsg').style.display='block'; $('calibMsg').textContent = framing.msg; }
+      else {
+        $('calibMsg').style.display = framing.ok ? 'none' : 'block';
+        if(!framing.ok) $('calibMsg').textContent = framing.msg;
+      }
     }
 
     renderDebug(reading, framing);
@@ -3872,11 +4086,17 @@
     badge.innerHTML = framing.msg + detalhe;
     badge.className = 'prep-status ' + framing.level;
 
+    const regra = framingRule(selectedExercise);
+    // ⛔ Contagem começada não volta atrás. Antes, um único quadro ruim durante
+    // os três segundos zerava tudo e o jogador reposicionava o corpo sem fim —
+    // no modo frontal isso acontecia praticamente toda vez.
+    if(prepCountdownId && regra.travaContagem) return;
+
     if(framing.ok){
       prepTravadoT = 0;
       $('prepFixBtn').style.display = 'none';
       prepOkFrames++;
-      if(prepOkFrames >= 8 && !prepCountdownId) startCountdown();   // corpo estável → conta pra começar
+      if(prepOkFrames >= regra.framesParaIniciar && !prepCountdownId) startCountdown();   // reconheceu → conta pra começar
     } else {
       prepOkFrames = 0;
       if(prepCountdownId){ clearInterval(prepCountdownId); prepCountdownId=null; $('prepCountdown').textContent=''; }
@@ -3934,6 +4154,7 @@
     $('prepError').style.display = phase==='error' ? 'block' : 'none';
     $('prepError').textContent = msg || '';
     prepTravadoT = 0; $('prepFixBtn').style.display = 'none';   // escotilha recomeça a cada fase
+    Estabilidade.reset();
     $('prepActivateBtn').style.display = (phase==='intro' || phase==='error') ? 'inline-flex' : 'none';
     $('prepActivateBtn').textContent = phase==='error' ? 'TENTAR NOVAMENTE' : 'ATIVAR CÂMERA';
     $('prepLoading').style.display = phase==='loading' ? 'block' : 'none';
@@ -3989,6 +4210,7 @@
 
   function resetBattleHud(){
     repCount=0; streak=0; bestStreak=0; prepOkFrames=0;
+    Estabilidade.reset();
     activeDetector = createDetector(selectedExercise);
     DEBUG.lines = [];
     $('repNumber').textContent='0'; $('streakStat').textContent='0';
