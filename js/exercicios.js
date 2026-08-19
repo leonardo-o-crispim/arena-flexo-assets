@@ -43,6 +43,7 @@ export const EXERCISES = {
     label:'Flexão', icon:'ex_pushup', repLabel:'flexões',
     baseDamage:2, gold:1, tipo:'força',
     defaults:{ down:100, up:150, minScore:0.30 },
+    faixaEnergia:{ de:100, ate:150 },
     measure(pose, MIN){ return articulacao(pose, ['left_shoulder','left_elbow','left_wrist'],
                                                  ['right_shoulder','right_elbow','right_wrist'], MIN); }
   },
@@ -50,6 +51,7 @@ export const EXERCISES = {
     label:'Agachamento', icon:'ex_squat', repLabel:'agachamentos',
     baseDamage:1, gold:1, tipo:'força',
     defaults:{ down:100, up:160, minScore:0.30 },
+    faixaEnergia:{ de:100, ate:160 },
     measure(pose, MIN){ return articulacao(pose, ['left_hip','left_knee','left_ankle'],
                                                  ['right_hip','right_knee','right_ankle'], MIN); }
   },
@@ -57,6 +59,7 @@ export const EXERCISES = {
     label:'Polichinelo', icon:'ex_jack', repLabel:'polichinelos',
     baseDamage:1, gold:0.5, tipo:'cardio',
     defaults:{ down:45, up:140, minScore:0.30 },
+    faixaEnergia:{ de:45, ate:140 },
     measure(pose, MIN){ return articulacao(pose, ['left_hip','left_shoulder','left_wrist'],
                                                  ['right_hip','right_shoulder','right_wrist'], MIN); }
   },
@@ -66,7 +69,15 @@ export const EXERCISES = {
   flexao_frontal: {
     label:'Flexão frontal', icon:'ex_pushup', repLabel:'flexões', oculto:true,
     baseDamage:2, gold:1, tipo:'força',
-    defaults:{ down:100, up:150, minScore:0.30 },
+    // ⚙️ CALIBRADO COM MEDIÇÃO REAL (vídeo de 19/08, 8 flexões em 40 s).
+    // O `down` era 100° e NUNCA era alcançado: lido no painel de debug, o vale
+    // mais fundo do sinal foi 102° e o mais raso 130° — a máquina de estados
+    // nunca saía de READY e o placar fechou em 0. Os picos ficaram todos acima
+    // de 156°, então o `up` de 150° já estava certo e não foi tocado.
+    // Com 140°/150°, a mesma série dá 8 repetições e 0 descartes.
+    // A faixa da barra de energia continua 100→150: ela não segue os gatilhos.
+    defaults:{ down:140, up:150, minScore:0.30 },
+    faixaEnergia:{ de:100, ate:150 },
     measure(pose, MIN){ return articulacao(pose, ['left_shoulder','left_elbow','left_wrist'],
                                                  ['right_shoulder','right_elbow','right_wrist'], MIN); }
   }

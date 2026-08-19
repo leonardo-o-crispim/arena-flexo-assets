@@ -2287,6 +2287,10 @@ import { Events, EVT, EXERCISES, ehFlexao, createDetector, usarLimiares,
 
   // -------- perfil do jogador (estado persistido) --------
   function clone(o){ return JSON.parse(JSON.stringify(o)); }
+  // Marca da calibragem dos limiares. Mudar esta string faz a re-semeadura
+  // rodar de novo nos saves antigos — é o que leva um ajuste novo até quem já
+  // tem perfil salvo, já que o valor gravado sempre vence o padrão.
+  const CALIBRAGEM = 'blazepose-cal1';
   function thresholdDefaults(){
     const t = {};
     Object.entries(EXERCISES).forEach(([id, ex]) => t[id] = {...ex.defaults});
@@ -2305,7 +2309,7 @@ import { Events, EVT, EXERCISES, ehFlexao, createDetector, usarLimiares,
     defeated: [],            // ids dos monstros já derrotados
     xp: 0,                   // ⭐ experiência acumulada — o nível é DERIVADO dela
     modoFlexao: 'flexao',    // 🤳 preferência: flexão de lado ou de frente
-    motorMedida: 'blazepose',// 🔄 marca a escala dos limiares (ver migrateProfile)
+    motorMedida: CALIBRAGEM, // 🔄 marca a escala/calibragem dos limiares (ver migrateProfile)
     mudo: false,             // 🔊 preferência de som, lembrada entre sessões
     owned: ['arma_punho','arm_comum','aura_roxa'],
     equipped: { arma:'arma_punho', armadura:'arm_comum', aura:'aura_roxa' },
@@ -2326,10 +2330,19 @@ import { Events, EVT, EXERCISES, ehFlexao, createDetector, usarLimiares,
     // verdade, medidos em 3D. Um número salvo na escala velha não quer dizer
     // nada na nova, então a calibração de câmera recomeça do padrão — UMA vez.
     // Nada mais do save é tocado: ouro, XP, nível, itens e monstros ficam.
-    if(p.motorMedida !== 'blazepose'){
+    // ⚠️ A checagem lê `loaded`, não `p`: como `p` nasce de um Object.assign
+    // sobre o DEFAULT_PROFILE, um save antigo SEM o campo já chegava aqui com a
+    // marca nova — e a re-semeadura nunca rodava. Silencioso e difícil de ver.
+    if(!loaded.motorMedida){
+      // vem do motor antigo (MoveNet): a escala inteira mudou, recomeça tudo
       p.thresholds = thresholdDefaults();
-      p.motorMedida = 'blazepose';
+    } else if(loaded.motorMedida !== CALIBRAGEM){
+      // já está no BlazePose: só a recalibragem do modo frontal, e apenas para
+      // quem nunca mexeu no valor — calibração manual do jogador é respeitada
+      const tf = p.thresholds.flexao_frontal;
+      if(tf && tf.down === 100) tf.down = EXERCISES.flexao_frontal.defaults.down;
     }
+    p.motorMedida = CALIBRAGEM;
     p.equipped   = Object.assign({}, DEFAULT_PROFILE.equipped, loaded.equipped || {});
     p.owned      = Array.from(new Set([...(loaded.owned || []), ...DEFAULT_PROFILE.owned]));
 
@@ -3337,10 +3350,19 @@ import { Events, EVT, EXERCISES, ehFlexao, createDetector, usarLimiares,
   function updateHud(reading){
     $('repNumber').textContent = repCount;
     $('streakStat').textContent = streak;
-    const th = profile.thresholds[selectedExercise];
-    // a barra de energia mostra o progresso DENTRO da repetição atual
-    const pct = Math.max(0, Math.min(100, ((reading.value - th.down)/(th.up - th.down))*100));
-    $('powerFill').style.width = (reading.state==='BOTTOM' ? 12 : reading.state==='ASCENDING' ? Math.max(20,pct) : pct) + '%';
+    // A barra de energia mostra o progresso DENTRO da repetição atual e tem
+    // FAIXA PRÓPRIA — de propósito. Antes ela dividia os números com os
+    // gatilhos de contagem, e calibrar um mexia no outro: ao subir o `down`
+    // para 140° a barra passaria a viver entre 140 e 150, pulando de 0 a 100%.
+    // Com faixa separada ela continua exatamente como está hoje.
+    const faixa = EXERCISES[selectedExercise].faixaEnergia;
+    const pct = Math.max(0, Math.min(100, ((reading.value - faixa.de)/(faixa.ate - faixa.de))*100));
+    // Contínua, sem degrau por estado. Os saltos ("12% quando EMBAIXO") vinham
+    // da máquina de QUATRO fases e nunca disparavam no modo frontal, porque o
+    // estado EMBAIXO não era alcançado — a barra andava suave e era assim que
+    // ela devia ficar. Com o gatilho calibrado o estado passa a ser alcançado,
+    // e o degrau apareceria. 'ASCENDING' então nem existe mais.
+    $('powerFill').style.width = pct + '%';
     $('stateTag').style.display='block';
     $('stateTag').textContent = STATE_LABEL[reading.state] || reading.state;
     $('stateTag').style.color = reading.formOK ? '' : '#f87171';
