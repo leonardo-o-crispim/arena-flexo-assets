@@ -1240,11 +1240,10 @@
 </div>
 <div class="footnote">protótipo educacional — inspirado na mecânica de apps de fitness com câmera</div>
 
-<!-- O TensorFlow (~1,5 MB) NÃO é carregado aqui de propósito. Como <script src>
-     comum é BLOQUEANTE, ele impedia o jogo de desenhar qualquer coisa até
-     terminar o download — era isso que deixava a tela parada por segundos antes
-     da tela de carregamento aparecer. Agora ele é baixado sob demanda, dentro
-     de ensureModel(), só quando a câmera é realmente ativada. -->
+<!-- O reconhecimento corporal NÃO é carregado aqui de propósito: são ~9 MB
+     entre WASM e modelo, e um <script src> comum é BLOQUEANTE — ele impedia o
+     jogo de desenhar qualquer coisa até terminar o download. Ele é buscado sob
+     demanda, dentro de Pose.carregar(), quando a câmera é ativada. -->
 
 <script>
   function setRealVH(){
@@ -1256,7 +1255,17 @@
   window.addEventListener('orientationchange', setRealVH);
   if(window.visualViewport) window.visualViewport.addEventListener('resize', setRealVH);
 </script>
-<script>
+<script type="module">
+// ═══════════════════════════════════════════════════════════════
+// 📦 MÓDULOS — interface e batalha ficam aqui; câmera, reconhecimento
+// corporal e contagem de repetições vivem em ./js/, cada um no seu arquivo.
+// ═══════════════════════════════════════════════════════════════
+import { Pose, kp } from './js/pose.js';
+import { CameraError, describeCameraError, openCamera, stopStream,
+         hasMultipleCameras, fitCanvas, facing, alternarFacing } from './js/camera.js';
+import { Events, EVT, EXERCISES, ehFlexao, createDetector, usarLimiares,
+         checkFraming, framingRule, Estabilidade } from './js/exercicios.js';
+
 (function(){
   const $ = id => document.getElementById(id);
 
@@ -1664,158 +1673,7 @@
   };
 
   // ---------------------------------------------------------------
-  // EXERCÍCIOS — cada exercício é um ATAQUE do RPG.
-  // Campos de gameplay (edite à vontade):
-  //   baseDamage → dano base por repetição (absoluto; a arma SOMA o bônus dela)
-  //   gold       → ouro por repetição
-  //   tipo       → 'força' ou 'cardio' (informativo, para features futuras)
-  // Para ADICIONAR um exercício novo basta criar uma entrada com esses campos,
-  // defaults{down,up,minScore} e uma função measure() que devolve um ângulo.
-  // Ex.: abdominal → jointAngle(pose, ['left_shoulder','left_hip','left_knee'], ['right_shoulder','right_hip','right_knee'], MS)
-  // ---------------------------------------------------------------
-  const EXERCISES = {
-    flexao: {
-      label:'Flexão', icon:'ex_pushup', repLabel:'flexões',
-      baseDamage:2, gold:1, tipo:'força',   // exige mais esforço → bate mais forte
-      defaults:{ down:95, up:155, minScore:0.35 },
-      measure(pose, MIN_SCORE){ return jointAngle(pose, ['left_shoulder','left_elbow','left_wrist'], ['right_shoulder','right_elbow','right_wrist'], MIN_SCORE); }
-    },
-    agachamento: {
-      label:'Agachamento', icon:'ex_squat', repLabel:'agachamentos',
-      baseDamage:1, gold:1, tipo:'força',
-      defaults:{ down:100, up:160, minScore:0.35 },
-      measure(pose, MIN_SCORE){ return jointAngle(pose, ['left_hip','left_knee','left_ankle'], ['right_hip','right_knee','right_ankle'], MIN_SCORE); }
-    },
-    polichinelo: {
-      label:'Polichinelo', icon:'ex_jack', repLabel:'polichinelos',
-      baseDamage:1, gold:0.5, tipo:'cardio',
-      defaults:{ down:45, up:140, minScore:0.30 },
-      measure(pose, MIN_SCORE){ return jointAngle(pose, ['left_hip','left_shoulder','left_wrist'], ['right_hip','right_shoulder','right_wrist'], MIN_SCORE); }
-    },
 
-    // ---- FLEXÃO DE FRENTE (oculto da grade: escolhido na tela de preparação) ----
-    // Mesmo dano, mesmo ouro, mesmo rótulo da flexão lateral — muda só COMO se mede.
-    // Ser "mais um exercício" faz este modo herdar detector, thresholds calibráveis,
-    // guia, combate e economia sem nenhuma engrenagem nova.
-    flexao_frontal: {
-      label:'Flexão frontal', icon:'ex_pushup', repLabel:'flexões', oculto:true,
-      baseDamage:2, gold:1, tipo:'força',
-      // faixa larga de propósito: entre 85 e 130 cabe qualquer flexão de verdade,
-      // e o que separa repetição de tremida é a duração mínima do ciclo, não a
-      // profundidade exata. Calibrável na tela de sensibilidade como os outros.
-      defaults:{ down:85, up:130, minScore:0.25 },
-      measure(pose, MIN_SCORE){ return frontalPushMeasure(pose, MIN_SCORE); }
-    }
-  };
-  // os dois modos da flexão — o jogador escolhe entre eles antes da câmera
-  const FLEXAO_MODOS = ['flexao','flexao_frontal'];
-  const ehFlexao = id => FLEXAO_MODOS.includes(id);
-
-  // ═══════════════════════════════════════════════════════════════
-  // 🤳 RECONHECIMENTO FRONTAL DA FLEXÃO
-  //
-  // De frente, o ângulo do cotovelo fica encurtado pela perspectiva e sozinho
-  // não basta. Fundimos TRÊS sinais, todos divididos pela LARGURA DOS OMBROS —
-  // a régua natural do corpo, que torna a medida independente da distância da
-  // câmera e do tamanho da pessoa.
-  //
-  //   1) extensão vertical ombro → punho   (ombros + braços)
-  //   2) ângulo do cotovelo                (braços)
-  //   3) altura da cabeça sobre as mãos    (cabeça + braços)
-  //   4) queda ombro → cotovelo            (ombros + braços, SEM depender das mãos)
-  //
-  // O sinal 4 existe porque os outros três precisam dos punhos: se as mãos
-  // saírem do quadro, ele sozinho ainda sustenta a leitura.
-  //
-  // Os três crescem juntos quando o braço estende, então o resultado tem a
-  // MESMA semântica do modo lateral (baixo = embaixo) e alimenta a máquina de
-  // estados existente sem alterá-la.
-  //
-  // ⚠️ Estes números são um ponto de partida geométrico. Calibre no aparelho
-  // pela tela de sensibilidade — o modo frontal aparece lá.
-  // ═══════════════════════════════════════════════════════════════
-  const FRONTAL_PUSHUP = {
-    extBaixo: 0.15,  extAlto: 1.20,     // faixa da extensão ombro→punho ÷ largura dos ombros
-    cabecaBaixo: 0.10, cabecaAlto: 1.45,// faixa da altura cabeça→punho ÷ largura dos ombros
-    quedaBaixo: -0.15, quedaAlto: 0.75, // faixa da queda ombro→cotovelo ÷ largura dos ombros
-    pesoExtensao: 0.38, pesoCotovelo: 0.24, pesoCabeca: 0.20, pesoQueda: 0.18,
-    // Os ombros são a RÉGUA: sem eles não há leitura nenhuma. Por isso entram com
-    // uma exigência própria, mais baixa que a do resto — cobrar deles a mesma nota
-    // dos punhos era o que devolvia "sem leitura" e travava a máquina de estados.
-    pisoOmbros: 0.15,
-  };
-
-  // 🩹 O modo frontal é o mais sujeito a piscadas: de frente as mãos somem
-  // debaixo do corpo e o rastreamento oscila. Estes números existem para o
-  // algoritmo ATRAVESSAR essas piscadas em vez de reagir a cada uma delas.
-  const FRONTAL_ROBUSTEZ = {
-    suavizacao: 0.35,   // peso do valor novo na média móvel — quanto menor, mais estável
-    memoriaMs: 1200,    // por quanto tempo o último valor bom sobrevive a um sumiço
-    minCicloMs: 500,    // ciclo mais curto que isso é tremida, não flexão
-    cooldownMs: 250,    // respiro entre uma repetição e a próxima
-    // 📏 Gatilhos em PORCENTAGEM da amplitude que o jogador está realmente
-    // fazendo, não em graus absolutos: a faixa medida muda com o corpo, com a
-    // altura do celular e com a distância, e nenhum número fixo serve para
-    // todos. Basta passar da metade para estar "embaixo" e voltar a 3/4 para
-    // estar "em cima" — quem separa repetição de oscilação é a zona morta entre
-    // os dois, não a profundidade exigida.
-    fracaoDescida: 0.45,
-    fracaoSubida: 0.75,
-    // Piso de amplitude: abaixo disso o corpo está parado. Medido, não chutado —
-    // com a média móvel ligada, tremer a câmera em ±12px produz amplitude ~0,
-    // então 6 já fica muito acima do ruído e ainda deixa passar meia flexão.
-    amplitudeMin: 6,
-    decaimento: 0.005,  // o envelope esquece extremos antigos devagar
-  };
-  function faixa01(v, lo, hi){ return Math.max(0, Math.min(1, (v - lo) / (hi - lo))); }
-
-  function frontalPushMeasure(pose, MIN_SCORE){
-    const F = FRONTAL_PUSHUP, bom = p => p && p.score > MIN_SCORE;
-    const ombroOK = p => p && p.score > Math.min(MIN_SCORE, F.pisoOmbros);
-    const ls = kp(pose,'left_shoulder'), rs = kp(pose,'right_shoulder');
-    if(!ombroOK(ls) || !ombroOK(rs)) return null;         // sem ombros não há régua
-    const largura = Math.hypot(ls.x - rs.x, ls.y - rs.y);
-    if(largura < 1) return null;
-    const ombroY = (ls.y + rs.y) / 2;
-
-    const sinais = [], pesos = [];
-    let somaScore = ls.score + rs.score, nScore = 2;
-
-    // 1) quanto os ombros estão acima das mãos
-    const punhos = [kp(pose,'left_wrist'), kp(pose,'right_wrist')].filter(bom);
-    let punhoY = null;
-    if(punhos.length){
-      punhoY = punhos.reduce((s,p)=> s + p.y, 0) / punhos.length;
-      sinais.push(faixa01((punhoY - ombroY) / largura, F.extBaixo, F.extAlto));
-      pesos.push(F.pesoExtensao);
-      punhos.forEach(p=>{ somaScore += p.score; nScore++; });
-    }
-    // 2) ângulo do cotovelo (reaproveita o mesmo jointAngle do modo lateral)
-    const cotovelo = jointAngle(pose, ['left_shoulder','left_elbow','left_wrist'],
-                                      ['right_shoulder','right_elbow','right_wrist'], MIN_SCORE);
-    if(cotovelo){ sinais.push(cotovelo.value / 180); pesos.push(F.pesoCotovelo); }
-    // 3) quanto a cabeça está acima das mãos
-    const nariz = kp(pose,'nose');
-    if(bom(nariz) && punhoY !== null){
-      sinais.push(faixa01((punhoY - nariz.y) / largura, F.cabecaBaixo, F.cabecaAlto));
-      pesos.push(F.pesoCabeca);
-      somaScore += nariz.score; nScore++;
-    }
-    // 4) quanto os cotovelos estão abaixo dos ombros — único sinal que NÃO
-    //    depende das mãos, então sustenta a leitura se elas saírem do quadro
-    const cotovelos = [kp(pose,'left_elbow'), kp(pose,'right_elbow')].filter(bom);
-    if(cotovelos.length){
-      const cotoveloY = cotovelos.reduce((s,p)=> s + p.y, 0) / cotovelos.length;
-      sinais.push(faixa01((cotoveloY - ombroY) / largura, F.quedaBaixo, F.quedaAlto));
-      pesos.push(F.pesoQueda);
-      cotovelos.forEach(p=>{ somaScore += p.score; nScore++; });
-    }
-    if(!sinais.length) return null;
-
-    const total = pesos.reduce((a,b)=> a + b, 0);
-    const misto = sinais.reduce((s,v,i)=> s + v * pesos[i], 0) / total;
-    return { value: misto * 180, confidence: somaScore / nScore };   // mesma escala do modo lateral
-  }
 
   // ---------------------------------------------------------------
   // 🛡️ MOLDURA DO PORTAL — anéis concêntricos, cravos e runas.
@@ -1963,26 +1821,6 @@
     return POSE_ART[g.art] || '';
   }
 
-  function kp(pose, name){ return pose.keypoints.find(k => k.name === name); }
-  function angleBetween(a,b,c){
-    const ab={x:a.x-b.x,y:a.y-b.y}, cb={x:c.x-b.x,y:c.y-b.y};
-    const dot=ab.x*cb.x+ab.y*cb.y, mA=Math.hypot(ab.x,ab.y), mC=Math.hypot(cb.x,cb.y);
-    if(mA===0||mC===0) return 180;
-    const cos=Math.max(-1,Math.min(1, dot/(mA*mC)));
-    return Math.acos(cos)*(180/Math.PI);
-  }
-  function jointAngle(pose, leftNames, rightNames, MIN_SCORE){
-    const angles=[]; let scoreSum=0, scoreN=0;
-    [leftNames, rightNames].forEach(names=>{
-      const pts = names.map(n=>kp(pose,n));
-      if(pts.every(p=>p && p.score>MIN_SCORE)){
-        angles.push(angleBetween(pts[0],pts[1],pts[2]));
-        pts.forEach(p=>{scoreSum+=p.score; scoreN++;});
-      }
-    });
-    if(angles.length===0) return null;
-    return { value: angles.reduce((a,b)=>a+b,0)/angles.length, confidence: scoreN? scoreSum/scoreN : 0 };
-  }
 
   const SKELETON_PAIRS = [
     ['left_shoulder','right_shoulder'],['left_shoulder','left_elbow'],['left_elbow','left_wrist'],
@@ -2467,28 +2305,30 @@
     defeated: [],            // ids dos monstros já derrotados
     xp: 0,                   // ⭐ experiência acumulada — o nível é DERIVADO dela
     modoFlexao: 'flexao',    // 🤳 preferência: flexão de lado ou de frente
+    motorMedida: 'blazepose',// 🔄 marca a escala dos limiares (ver migrateProfile)
     mudo: false,             // 🔊 preferência de som, lembrada entre sessões
     owned: ['arma_punho','arm_comum','aura_roxa'],
     equipped: { arma:'arma_punho', armadura:'arm_comum', aura:'aura_roxa' },
     thresholds: thresholdDefaults(),   // sensibilidade da câmera por exercício
   };
   let profile = clone(DEFAULT_PROFILE);
+  // injeção: o módulo de exercícios não conhece o perfil, só pergunta por ele
+  usarLimiares(id => profile.thresholds[id]);
 
   function migrateProfile(loaded){
     if(!loaded) return clone(DEFAULT_PROFILE);
     const p = Object.assign(clone(DEFAULT_PROFILE), loaded);
     p.thresholds = Object.assign(thresholdDefaults(), loaded.thresholds || {});
 
-    // 🤳 Re-semeadura do modo frontal. Os limiares originais (75/140) saíram de
-    // um cálculo geométrico e nunca tinham passado por um corpo real — na
-    // prática a batalha não começava. Um save antigo carrega esses números para
-    // sempre, porque o valor salvo vence o padrão. Então trocamos, UMA vez, e
-    // só para quem ainda está exatamente no valor de fábrica: quem calibrou na
-    // tela de sensibilidade mantém o que escolheu.
-    const tf = p.thresholds.flexao_frontal, novoF = EXERCISES.flexao_frontal.defaults;
-    if(tf){
-      if(tf.down === 75 && tf.up === 140){ tf.down = novoF.down; tf.up = novoF.up; }
-      if(tf.minScore === 0.30) tf.minScore = novoF.minScore;
+    // 🔄 O MOTOR DE MEDIDA MUDOU, e com ele o SIGNIFICADO dos limiares.
+    // Antes eram ângulos 2D (achatados pela perspectiva) e, no modo frontal,
+    // uma mistura de quatro sinais numa escala inventada. Agora são graus de
+    // verdade, medidos em 3D. Um número salvo na escala velha não quer dizer
+    // nada na nova, então a calibração de câmera recomeça do padrão — UMA vez.
+    // Nada mais do save é tocado: ouro, XP, nível, itens e monstros ficam.
+    if(p.motorMedida !== 'blazepose'){
+      p.thresholds = thresholdDefaults();
+      p.motorMedida = 'blazepose';
     }
     p.equipped   = Object.assign({}, DEFAULT_PROFILE.equipped, loaded.equipped || {});
     p.owned      = Array.from(new Set([...(loaded.owned || []), ...DEFAULT_PROFILE.owned]));
@@ -3266,444 +3106,10 @@
     skeletonEveryNFrames: 1 // desenhe o esqueleto a cada N frames processados
   };
 
-  let detector = null, currentFacing = 'user';
 
-  // 📦 O reconhecimento corporal é a maior dependência do jogo (~1,5 MB) e só
-  // serve à câmera. Baixá-lo na abertura travava a primeira tela; aqui ele é
-  // buscado sob demanda, já com a tela de "Carregando reconhecimento" à mostra.
-  const MODELO_CDN = [
-    'https://cdnjs.cloudflare.com/ajax/libs/tensorflow/4.22.0/tf.min.js',
-    'https://cdn.jsdelivr.net/npm/@tensorflow-models/pose-detection@2.1.3/dist/pose-detection.min.js',
-  ];
-  function carregarScript(url){
-    return new Promise((res, rej)=>{
-      const s = document.createElement('script');
-      s.src = url;
-      s.async = false;                       // a ordem importa: tf antes de pose-detection
-      s.onload  = ()=> res();
-      s.onerror = ()=> rej(new CameraError('model',
-        'Não foi possível baixar o reconhecimento corporal. Verifique sua conexão e tente de novo.'));
-      document.head.appendChild(s);
-    });
-  }
 
-  async function ensureModel(){
-    if(detector) return;
-    if(typeof tf === 'undefined')            await carregarScript(MODELO_CDN[0]);
-    if(typeof poseDetection === 'undefined') await carregarScript(MODELO_CDN[1]);
-    if(typeof tf === 'undefined' || typeof poseDetection === 'undefined')
-      throw new CameraError('model', 'O modelo de reconhecimento não carregou. Verifique sua conexão com a internet.');
-    try{
-      await tf.setBackend('webgl'); await tf.ready();
-    }catch(e){
-      await tf.setBackend('cpu'); await tf.ready();   // fallback: aparelho sem WebGL
-    }
-    detector = await poseDetection.createDetector(
-      poseDetection.SupportedModels.MoveNet,
-      { modelType: poseDetection.movenet.modelType.SINGLEPOSE_LIGHTNING }
-    );
-  }
 
-  // erro de câmera com mensagem amigável em vez de tela quebrada
-  class CameraError extends Error{
-    constructor(kind, msg){ super(msg); this.kind = kind; }
-  }
-  function describeCameraError(err){
-    if(err instanceof CameraError) return err.message;
-    const n = err && err.name;
-    if(n==='NotAllowedError' || n==='PermissionDeniedError')
-      return window.isSecureContext
-        ? 'Você negou o acesso à câmera. Libere a permissão nas configurações e tente novamente.'
-        : 'O acesso à câmera foi bloqueado porque o app não está sendo aberto por um endereço seguro (https://).';
-    if(n==='NotFoundError' || n==='DevicesNotFoundError')
-      return 'Nenhuma câmera foi encontrada neste aparelho.';
-    if(n==='NotReadableError' || n==='TrackStartError')
-      return 'A câmera já está sendo usada por outro aplicativo. Feche o outro app e tente de novo.';
-    if(n==='OverconstrainedError')
-      return 'Esta câmera não suporta a resolução pedida. Tente trocar de câmera.';
-    if(n==='SecurityError')
-      return 'O navegador bloqueou a câmera. Abra a página por HTTPS para liberar o acesso.';
-    return 'Não foi possível acessar a câmera. Verifique as permissões do navegador e tente novamente.';
-  }
 
-  // WebViews e navegadores antigos não expõem navigator.mediaDevices, mas ainda
-  // trazem a API antiga com prefixo. Um único ponto de entrada para os dois casos.
-  function pedirCamera(constraints){
-    if(navigator.mediaDevices && navigator.mediaDevices.getUserMedia)
-      return navigator.mediaDevices.getUserMedia(constraints);
-    const legado = navigator.getUserMedia || navigator.webkitGetUserMedia
-                || navigator.mozGetUserMedia || navigator.msGetUserMedia;
-    if(!legado) return null;                       // nem a antiga existe
-    return new Promise((res, rej)=> legado.call(navigator, constraints, res, rej));
-  }
-
-  async function openCamera(videoEl, facing){
-    currentFacing = facing || currentFacing;
-    const constraints = { video:{ facingMode:currentFacing, width:{ideal:720}, height:{ideal:960} }, audio:false };
-    const pedido = pedirCamera(constraints);
-    if(!pedido){
-      // Sem NENHUMA API de câmera: quase sempre é contexto inseguro. O navegador
-      // remove a API inteira quando a página não vem por https:// (ou localhost),
-      // e é por isso que nem chega a aparecer pedido de permissão.
-      throw new CameraError('unsupported', window.isSecureContext
-        ? 'Este navegador não oferece acesso à câmera. Tente pelo Chrome ou Safari atualizado.'
-        : 'A câmera só funciona em endereço seguro (https://). Este app foi aberto por '
-          + (location.protocol || 'file:') + ', e o navegador desativa a câmera nesse caso.');
-    }
-    const stream = await pedido;
-    videoEl.srcObject = stream;
-    await new Promise((res, rej)=>{
-      const t = setTimeout(()=>rej(new CameraError('timeout','A câmera demorou demais para responder. Tente novamente.')), 10000);
-      videoEl.onloadedmetadata = ()=>{ clearTimeout(t); res(); };
-    });
-    await videoEl.play();
-    return stream;
-  }
-  // encerra o stream por completo — sem vazamento de câmera/memória ao sair da tela
-  function stopStream(videoEl){
-    if(videoEl.srcObject){ videoEl.srcObject.getTracks().forEach(t=>t.stop()); videoEl.srcObject=null; }
-  }
-  async function hasMultipleCameras(){
-    try{
-      if(!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return false;
-      const devs = await navigator.mediaDevices.enumerateDevices();
-      return devs.filter(d=>d.kind==='videoinput').length > 1;
-    }catch(e){ return false; }
-  }
-  // preserva a proporção do vídeo — nada de imagem deformada
-  function fitCanvas(canvas, videoEl){
-    const r = videoEl.getBoundingClientRect();
-    const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    canvas.width = Math.round(r.width * dpr);
-    canvas.height = Math.round(r.height * dpr);
-    canvas.style.width = r.width+'px';
-    canvas.style.height = r.height+'px';
-  }
-
-  // ═══════════════════════════════════════════════════════════════
-  // 🧍 ENQUADRAMENTO — o app orienta o jogador em vez de presumir
-  // que ele sabe posicionar o celular.
-  // ═══════════════════════════════════════════════════════════════
-  // Além do veredito, devolve os NÚMEROS que o produziram: quantos pontos
-  // passaram da confiança mínima e qual foi o MELHOR sinal recebido. Sem eles
-  // "Procurando você…" é um beco sem saída — não dá para distinguir "falta
-  // corpo no quadro" de "o mínimo exigido está alto demais para esta câmera".
-  function checkFraming(pose, exerciseId, MIN_SCORE){
-    const required = REQUIRED_KEYPOINTS[exerciseId] || [];
-    const regra    = framingRule(exerciseId);
-    if(!pose) return { ok:false, level:'none', seen:0, total:required.length, best:0, alvo:0,
-                       msg:'Procurando você… fique visível para a câmera.' };
-    const scores  = required.map(n => { const p = kp(pose,n); return (p && p.score) || 0; });
-    const visible = required.filter(n => { const p = kp(pose,n); return p && p.score > MIN_SCORE; });
-    const ratio   = visible.length / required.length;
-
-    // "alvo" é a confiança mínima que FARIA este quadro passar: como basta uma
-    // FRAÇÃO dos pontos, é a nota do último que entra na conta, não a do melhor.
-    // Mirar no melhor baixaria a régua sem destravar nada.
-    const ordenados = scores.slice().sort((a,b)=> b-a);
-    const precisa   = Math.max(1, Math.ceil(required.length * regra.minRatio));
-    const alvo      = ordenados[precisa-1] || 0;
-    // Os pontos existem e só não alcançam a régua? Então o problema é sinal, não
-    // enquadramento — e mandar "afaste o celular" só faria o jogador piorar.
-    const sinalFraco = alvo >= 0.08;
-    const diag = { seen:visible.length, total:required.length, best:ordenados[0] || 0, alvo:alvo };
-    const veredito = (o) => Object.assign(o, diag);
-    const MSG_FRACO = '⚠️ Sinal fraco — mais luz no corpo, ou exija menos confiança.';
-
-    if(ratio === 0)             return veredito({ ok:false, level:'none',
-                                  msg: sinalFraco ? MSG_FRACO : 'Procurando você… fique visível para a câmera.' });
-    if(ratio < regra.minRatio)  return veredito({ ok:false, level:'partial',
-                                  msg: sinalFraco ? MSG_FRACO : '⚠️ Corpo parcialmente fora do quadro — afaste o celular.' });
-
-    // corpo muito próximo/cortado nas bordas?
-    const pts = visible.map(n=>kp(pose,n));
-    const xs = pts.map(p=>p.x), ys = pts.map(p=>p.y);
-    const w = pose.__vw || 1, h = pose.__vh || 1;
-    const margin = 0.02;
-    const cortado = Math.min(...xs) < w*margin || Math.max(...xs) > w*(1-margin) ||
-                    Math.min(...ys) < h*margin || Math.max(...ys) > h*(1-margin);
-    if(regra.checarBordas && cortado && ratio < 1)
-      return veredito({ ok:false, level:'partial', msg:'⚠️ Parte do corpo está cortada — afaste o celular.' });
-    return veredito({ ok:true, level:'ok', msg:'✓ Posição adequada' });
-  }
-
-  // ═══════════════════════════════════════════════════════════════
-  // 🩹 ESTABILIDADE DO VEREDITO
-  // O rastreamento pisca: um quadro isolado sem pontos suficientes não pode
-  // desfazer o que vinte quadros bons construíram. Aqui o último veredito BOM
-  // sobrevive por um instante, e o jogador para de ser mandado se reposicionar
-  // por causa de uma oscilação que ele nem viu acontecer.
-  // Memória 0 = desligado, e é o que os outros exercícios usam.
-  // ═══════════════════════════════════════════════════════════════
-  const Estabilidade = {
-    tOK: 0, ultimo: null,
-    filtrar(framing, memoriaMs, agora){
-      if(framing.ok){ this.tOK = agora; this.ultimo = framing; return framing; }
-      if(memoriaMs > 0 && this.ultimo && agora - this.tOK < memoriaMs)
-        return Object.assign({}, framing, { ok:true, level:'ok', msg:this.ultimo.msg });
-      return framing;
-    },
-    reset(){ this.tOK = 0; this.ultimo = null; }
-  };
-
-  // ═══════════════════════════════════════════════════════════════
-  // 🏋️ DETECTOR DE EXERCÍCIOS — máquina de estados
-  //
-  //   READY → DESCENDING → BOTTOM → ASCENDING → COMPLETED → READY
-  //
-  // Uma repetição só conta quando o CICLO INTEIRO é concluído: descer
-  // até o ângulo baixo, permanecer lá o tempo mínimo e voltar à posição
-  // inicial. Frames soltos, tremidas e movimentos parciais não contam.
-  //
-  // O detector NÃO conhece o inimigo nem o dano — ele só anuncia
-  // "EXERCISE_COMPLETED". Quem decide o que isso significa é o Combat.
-  // ═══════════════════════════════════════════════════════════════
-  const Events = {
-    _l:{},
-    on(type, fn){ (this._l[type] = this._l[type] || []).push(fn); },
-    off(type, fn){ if(this._l[type]) this._l[type] = this._l[type].filter(f=>f!==fn); },
-    emit(type, payload){ (this._l[type]||[]).forEach(fn=>{ try{ fn(payload); }catch(e){ console.error(e); } }); }
-  };
-  const EVT = { COMPLETED:'EXERCISE_COMPLETED', STATE:'EXERCISE_STATE', INVALID:'EXERCISE_INVALID' };
-
-  const DETECTOR_RULES = {
-    minBottomMs: 120,   // tempo mínimo na posição baixa (evita "quicar")
-    minRepMs: 600,      // duração mínima de um ciclo completo
-    cooldownMs: 350,    // debounce entre repetições
-    maxRepMs: 12000,    // ciclo longo demais → aborta e volta para READY
-  };
-
-  class ExerciseDetector {
-    constructor(exerciseId){
-      this.id = exerciseId;
-      this.def = EXERCISES[exerciseId];
-      this.reset();
-    }
-    get thresholds(){ return profile.thresholds[this.id]; }
-    reset(){
-      this.state = 'READY';
-      this.reps = 0;
-      this.tBottom = 0; this.tRepStart = 0; this.tLastRep = 0;
-      this.lastValue = null; this.lastConfidence = 0;
-      this.rejections = 0;
-    }
-    // validação específica de forma; sobrescrita pelos detectores concretos
-    validateForm(){ return true; }
-
-    update(pose, now){
-      const th = this.thresholds;
-      const m = this.def.measure(pose, th.minScore);
-      if(!m){ this.lastValue = null; return null; }
-      this.lastValue = m.value; this.lastConfidence = m.confidence;
-
-      const formOK = this.validateForm(pose, th.minScore);
-      const prev = this.state;
-
-      if(this.state !== 'READY' && this.tRepStart && now - this.tRepStart > DETECTOR_RULES.maxRepMs){
-        this.state = 'READY';   // demorou demais: descarta o ciclo
-      }
-
-      const mid = (th.down + th.up) / 2;   // meio do curso: onde a descida começa a valer
-
-      switch(this.state){
-        case 'READY':
-          if(m.value < mid && formOK && now - this.tLastRep > DETECTOR_RULES.cooldownMs){
-            this.state = 'DESCENDING'; this.tRepStart = now;
-          }
-          break;
-        case 'DESCENDING':
-          if(m.value < th.down){ this.state='BOTTOM'; this.tBottom = now; }
-          else if(m.value > th.up){ this.state='READY'; }   // subiu sem completar
-          break;
-        case 'BOTTOM':
-          if(m.value > th.down){
-            if(now - this.tBottom >= DETECTOR_RULES.minBottomMs) this.state='ASCENDING';
-            else { this.state='READY'; this.rejections++; Events.emit(EVT.INVALID,{reason:'rápido demais'}); }
-          }
-          break;
-        case 'ASCENDING':
-          if(m.value > th.up){
-            const dur = now - this.tRepStart;
-            if(dur >= DETECTOR_RULES.minRepMs && formOK){
-              this.reps++; this.tLastRep = now; this.state='READY';
-              // 📦 evento: o detector apenas AVISA que houve repetição válida
-              Events.emit(EVT.COMPLETED, {
-                type: EVT.COMPLETED, exercise:this.id, repetition:this.reps,
-                confidence: Number(m.confidence.toFixed(2)), durationMs: dur
-              });
-            } else {
-              this.state='READY'; this.rejections++;
-              Events.emit(EVT.INVALID,{reason: dur<DETECTOR_RULES.minRepMs ? 'movimento rápido demais' : 'forma incorreta'});
-            }
-          }
-          else if(m.value < th.down){ this.state='BOTTOM'; this.tBottom = now; }  // desceu de novo
-          break;
-      }
-      if(prev !== this.state) Events.emit(EVT.STATE, { state:this.state, exercise:this.id });
-      return { value:m.value, confidence:m.confidence, state:this.state, formOK };
-    }
-  }
-
-  // FLEXÃO — o detector mais completo: além do ângulo do cotovelo, exige
-  // tronco alinhado (ombro–quadril–joelho ~reto). Assim, balançar os braços
-  // em pé não vira ataque.
-  class PushUpDetector extends ExerciseDetector {
-    validateForm(pose, MIN_SCORE){
-      const torso = jointAngle(pose, ['left_shoulder','left_hip','left_knee'], ['right_shoulder','right_hip','right_knee'], MIN_SCORE);
-      if(!torso) return true;          // sem pontos suficientes, não penaliza o jogador
-      return torso.value > 140;         // tronco esticado
-    }
-  }
-  // AGACHAMENTO — exige tronco relativamente ereto durante o movimento
-  class SquatDetector extends ExerciseDetector {
-    validateForm(pose, MIN_SCORE){
-      const torso = jointAngle(pose, ['left_shoulder','left_hip','left_knee'], ['right_shoulder','right_hip','right_knee'], MIN_SCORE);
-      if(!torso) return true;
-      return torso.value > 55;
-    }
-  }
-  // ═══════════════════════════════════════════════════════════════
-  // 🤳 FLEXÃO FRONTAL — máquina de DOIS estados, de propósito.
-  //
-  // O ciclo de quatro fases do detector padrão (descer → segurar embaixo →
-  // subir → chegar em cima) tem quatro pontos onde a repetição pode ser
-  // descartada, e de frente ela era descartada quase sempre. Aqui sobra o
-  // essencial que o jogador reconhece:
-  //
-  //        EM CIMA  ──passou da metade da amplitude──▶  EMBAIXO
-  //        EM CIMA  ◀──voltou a 3/4 da amplitude─────  EMBAIXO  → +1 repetição
-  //
-  // Os dois gatilhos são distantes um do outro (histerese): o valor precisa
-  // ATRAVESSAR a zona morta do meio para trocar de estado, então oscilar em
-  // volta de um deles não gera repetição nenhuma. E os dois são frações da
-  // amplitude MEDIDA, não graus fixos — o detector se ajusta ao que o jogador
-  // está fazendo. O único outro filtro é a duração mínima do ciclo: é ele que
-  // separa flexão de tremida, não a postura.
-  //
-  // Nada de validação de forma: ombro torto, profundidade irregular e corpo
-  // levemente girado contam do mesmo jeito. Nesta fase vale mais contar uma
-  // flexão torta do que perder uma flexão boa.
-  // ═══════════════════════════════════════════════════════════════
-  class FrontalPushUpDetector extends ExerciseDetector {
-    reset(){
-      super.reset();
-      this.state = 'READY';      // vocabulário do HUD: READY = em cima ("DESÇA")
-      this.suave = null;         // média móvel do valor medido
-      this.tUltimoBom = 0;       // quando a última leitura válida chegou
-      this.tDescida = 0;         // início do ciclo atual
-      this.tSaiuDoTopo = 0;      // instante em que o corpo começou a descer
-      // Envelope da amplitude: começa VAZIO de propósito. Semeá-lo com os
-      // limiares salvos parecia inofensivo e não era — se a faixa real do corpo
-      // cair longe do palpite, os gatilhos ficam no lugar errado por segundos e
-      // as primeiras flexões se perdem. Sem semente não há palpite errado:
-      // a primeira descida já ensina a faixa, e a trava de amplitude mínima
-      // garante que nada seja contado antes disso.
-      this.vMin = null; this.vMax = null;
-      this.gatilhos = { baixo:0, alto:0, amplitude:0 };
-    }
-
-    update(pose, now){
-      const th = this.thresholds;
-      const R = FRONTAL_ROBUSTEZ;
-      const m = this.def.measure(pose, th.minScore);
-
-      if(m){
-        // média móvel: um quadro ruim isolado desloca pouco o valor
-        this.suave = (this.suave === null) ? m.value : this.suave + (m.value - this.suave) * R.suavizacao;
-        this.lastConfidence = m.confidence;
-        this.tUltimoBom = now;
-      } else if(this.suave === null || now - this.tUltimoBom > R.memoriaMs){
-        this.lastValue = null; return null;      // sumiu de vez: aí sim, sem leitura
-      }
-      // entre um caso e outro: a leitura sumiu HÁ POUCO e o último valor
-      // continua valendo. É o que impede o ciclo de se perder numa piscada.
-
-      const v = this.suave;
-      this.lastValue = v;
-      const prev = this.state;
-
-      // Envelope adaptativo: encosta na hora num extremo novo e esquece os
-      // antigos devagar. É o que faz o mesmo código servir para qualquer corpo,
-      // qualquer altura de celular e qualquer distância, sem calibração.
-      this.vMin = (this.vMin === null) ? v : Math.min(v, this.vMin + (v - this.vMin) * R.decaimento);
-      this.vMax = (this.vMax === null) ? v : Math.max(v, this.vMax + (v - this.vMax) * R.decaimento);
-      const amplitude = this.vMax - this.vMin;
-      const baixo = this.vMin + amplitude * R.fracaoDescida;
-      const alto  = this.vMin + amplitude * R.fracaoSubida;
-      this.gatilhos = { baixo, alto, amplitude };
-
-      if(this.state === 'READY'){
-        // O ciclo começa quando o corpo SAI DO TOPO, não quando chega embaixo.
-        // Cronometrar só a partir do fundo media a subida sozinha, e flexões
-        // boas eram descartadas como "rápidas demais".
-        if(amplitude >= R.amplitudeMin && v < alto){ if(!this.tSaiuDoTopo) this.tSaiuDoTopo = now; }
-        else this.tSaiuDoTopo = 0;
-
-        if(amplitude >= R.amplitudeMin && v < baixo && now - this.tLastRep > R.cooldownMs){
-          this.state = 'BOTTOM';                 // vocabulário do HUD: BOTTOM = embaixo ("SUBA")
-          this.tDescida = this.tSaiuDoTopo || now;
-          this.tSaiuDoTopo = 0;
-        }
-      } else if(v > alto){
-        const dur = now - this.tDescida;
-        this.state = 'READY';
-        if(dur >= R.minCicloMs){
-          this.reps++; this.tLastRep = now;
-          Events.emit(EVT.COMPLETED, {
-            type: EVT.COMPLETED, exercise:this.id, repetition:this.reps,
-            confidence: Number((this.lastConfidence || 0).toFixed(2)), durationMs: dur
-          });
-        } else {
-          this.rejections++;
-          Events.emit(EVT.INVALID, { reason:'movimento rápido demais' });
-        }
-      }
-      if(prev !== this.state) Events.emit(EVT.STATE, { state:this.state, exercise:this.id });
-      return { value:v, confidence:this.lastConfidence || 0, state:this.state, formOK:true };
-    }
-  }
-  class JumpingJackDetector extends ExerciseDetector {}
-
-  // Para adicionar um exercício novo (abdominal, corrida...), crie a entrada
-  // em EXERCISES e registre a classe do detector aqui. Nada mais muda.
-  const DETECTOR_CLASSES = { flexao:PushUpDetector, flexao_frontal:FrontalPushUpDetector,
-                             agachamento:SquatDetector, polichinelo:JumpingJackDetector };
-  function createDetector(exerciseId){
-    const C = DETECTOR_CLASSES[exerciseId] || ExerciseDetector;
-    return new C(exerciseId);
-  }
-  const REQUIRED_KEYPOINTS = {
-    flexao:      ['left_shoulder','right_shoulder','left_elbow','right_elbow','left_wrist','right_wrist','left_hip','right_hip'],
-    // 🤳 TRÊS pontos, e só. De frente, o quadril fica atrás do corpo, as mãos
-    // somem debaixo dele e os cotovelos apontam para a câmera — pedir sete
-    // pontos era pedir justamente os que a pose frontal esconde. Cabeça e os
-    // dois ombros são os que sempre aparecem, e são exatamente os que a medida
-    // precisa: os ombros dão a régua e o centro, o nariz dá a altura.
-    flexao_frontal: ['nose','left_shoulder','right_shoulder'],
-    agachamento: ['left_hip','right_hip','left_knee','right_knee','left_ankle','right_ankle','left_shoulder','right_shoulder'],
-    polichinelo: ['left_shoulder','right_shoulder','left_wrist','right_wrist','left_hip','right_hip','left_ankle','right_ankle'],
-  };
-
-  // Quanto cada exercício exige do enquadramento antes de deixar a batalha
-  // começar. Tudo o que era número fixo dentro da lógica virou linha aqui —
-  // o modo frontal é o tolerante, os outros seguem exatamente como estavam.
-  const FRAMING_RULES = {
-    padrao: {
-      minRatio: 0.75,          // fração dos pontos que precisa passar da confiança
-      checarBordas: true,      // reclamar quando o corpo encosta na borda do quadro
-      framesParaIniciar: 8,    // quadros bons seguidos antes da contagem
-      travaContagem: false,    // contagem começada pode ser cancelada
-      memoriaMs: 0,            // por quanto tempo um veredito bom sobrevive a um quadro ruim
-    },
-    flexao_frontal: {
-      minRatio: 0.60,          // 2 dos 3 pontos bastam
-      checarBordas: false,     // de frente, braços e pernas encostam nas bordas e está tudo certo
-      framesParaIniciar: 3,    // reconheceu, começa
-      travaContagem: true,     // ⛔ começou a contar, não volta atrás
-      memoriaMs: 1200,
-    },
-  };
-  const framingRule = id => FRAMING_RULES[id] || FRAMING_RULES.padrao;
 
   // ---------------------------------------------------------------
   // ⚔️ BATALHA — o exercício É o ataque.
@@ -3973,18 +3379,15 @@
   function renderDebug(reading, framing){
     if(!DEBUG.on) return;
     const th = profile.thresholds[selectedExercise] || {};
-    const backend = (typeof tf !== 'undefined' && tf.getBackend) ? (tf.getBackend() || '?') : 'sem tf';
+    const motor = Pose.pronto() ? 'blazepose' : 'carregando';
     const d = $('debugPanel');
     d.innerHTML = `<b>DEBUG</b> · ${DEBUG.fps} fps · ${selectedExercise}<br>` +
-      `backend ${backend} · vídeo ${CAM.vw}×${CAM.vh} · poses ${CAM.poses}<br>` +
+      `motor ${motor} · vídeo ${CAM.vw}×${CAM.vh} · poses ${CAM.poses}<br>` +
       `pontos ${framing.seen||0}/${framing.total||0} · melhor ${Math.round((framing.best||0)*100)}%` +
       ` · mín ${Math.round((th.minScore||0)*100)}% · bastaria ${Math.round((framing.alvo||0)*100)}%<br>` +
       `ângulo ${reading?Math.round(reading.value)+'°':'--'} · conf ${reading?reading.confidence.toFixed(2):'--'}<br>` +
       `estado <b>${reading?reading.state:'--'}</b> · forma ${reading? (reading.formOK?'ok':'✗') : '--'}<br>` +
-      (activeDetector && activeDetector.gatilhos
-        ? `faixa ${Math.round(activeDetector.vMin||0)}–${Math.round(activeDetector.vMax||0)}` +
-          ` · gatilhos ${Math.round(activeDetector.gatilhos.baixo)}/${Math.round(activeDetector.gatilhos.alto)}<br>`
-        : '') +
+      `gatilhos desce<${th.down}° · sobe>${th.up}°<br>` +
       `enquadramento ${framing.level} · descartadas ${activeDetector?activeDetector.rejections:0}<br>` +
       (CAM.erroMsg ? `<span style="color:#f87171">erro(${CAM.erros}) ${CAM.erroMsg}</span><br>` : '') +
       `HP inimigo ${Math.round(Battle.enemyHP)} · seu HP ${Battle.playerHP}<br>` +
@@ -4025,12 +3428,12 @@
     const video=$('video'), canvas=$('skeleton'), ctx=canvas.getContext('2d');
     if(!video.videoWidth){ rafId = requestAnimationFrame(trainingLoop); return; }
 
-    let poses = [];
+    let pose = null;
     // ⚠️ Este erro já foi engolido em silêncio, e o sintoma era a tela travada
     // em "Procurando você…" para sempre — sem nenhuma pista do motivo. Agora ele
     // é contado e, se insistir, aparece para o jogador e no painel de teste.
     try{
-      poses = await detector.estimatePoses(video, {flipHorizontal:false});
+      pose = Pose.detectar(video, now);
       CAM.erros = 0;
     }catch(e){
       CAM.erros++; CAM.erroMsg = String((e && e.message) || e).slice(0,120);
@@ -4041,7 +3444,7 @@
       rafId = requestAnimationFrame(trainingLoop); return;
     }
     if(!running) return;   // a tela pode ter sido fechada durante o await
-    CAM.poses = poses.length;
+    CAM.poses = pose ? 1 : 0;
     CAM.vw = video.videoWidth; CAM.vh = video.videoHeight;
 
     // contador de FPS para o modo debug
@@ -4052,9 +3455,7 @@
     const sx=canvas.width/video.videoWidth, sy=canvas.height/video.videoHeight;
     let reading = null, framing = { ok:false, level:'none', seen:0, total:0, best:0, alvo:0, msg:'Procurando você…' };
 
-    if(poses.length>0){
-      const pose = poses[0];
-      pose.__vw = video.videoWidth; pose.__vh = video.videoHeight;
+    if(pose){
       frameCounter++;
       if(frameCounter % PERF.skeletonEveryNFrames === 0) drawSkeleton(ctx, canvas, pose, sx, sy, th.minScore);
       framing = Estabilidade.filtrar(checkFraming(pose, selectedExercise, th.minScore),
@@ -4245,9 +3646,9 @@
       // modelo antes (segundos em rede móvel) fazia o gesto expirar, e o Android
       // descartava o pedido em silêncio — sem aviso e sem entrada nas
       // configurações. Câmera primeiro; o modelo pode esperar.
-      await openCamera($('video'), currentFacing);
+      await openCamera($('video'), facing());
       fitCanvas($('skeleton'), $('video'));
-      await ensureModel();
+      await Pose.carregar();
     }catch(err){
       stopStream($('video'));
       showPrepScreen('error', describeCameraError(err));
@@ -4359,8 +3760,8 @@
     if(!video.videoWidth){ sensRaf = requestAnimationFrame(sensLoop); return; }
     // Sem este try o primeiro erro do modelo derrubava o loop de vez: o ângulo
     // ficava em "--" para sempre e parecia falta de detecção, não uma falha.
-    let poses = [];
-    try{ poses = await detector.estimatePoses(video, {flipHorizontal:false}); }
+    let pose = null;
+    try{ pose = Pose.detectar(video, performance.now()); }
     catch(e){
       $('sensValue').textContent='--';
       $('sensZone').className='sens-zone down';
@@ -4371,8 +3772,7 @@
     const sx=canvas.width/video.videoWidth, sy=canvas.height/video.videoHeight;
     const MIN_SCORE = parseInt($('confSlider').value)/100;
 
-    if(poses.length>0){
-      const pose=poses[0];
+    if(pose){
       drawSkeleton(ctx, canvas, pose, sx, sy, MIN_SCORE);
       const m = EXERCISES[sensExercise].measure(pose, MIN_SCORE);
       if(m){
@@ -4397,7 +3797,7 @@
     // ⚠️ Mesma ordem corrigida da batalha: câmera DENTRO da janela do gesto do
     // usuário, modelo depois. Baixar o modelo primeiro fazia o Android
     // descartar o pedido de permissão em silêncio.
-    try{ await openCamera($('video2')); fitCanvas($('skeleton2'), $('video2')); await ensureModel(); }
+    try{ await openCamera($('video2')); fitCanvas($('skeleton2'), $('video2')); await Pose.carregar(); }
     catch(err){ alert(describeCameraError(err)); showScreen('menu'); return; }
     sensRunning=true; sensLoop();
   }
@@ -4414,9 +3814,8 @@
   $('startBtn').addEventListener('click', startWorkout);
   $('prepActivateBtn').addEventListener('click', activateCamera);
   $('flipCamBtn').addEventListener('click', async ()=>{
-    currentFacing = (currentFacing==='user') ? 'environment' : 'user';
     stopStream($('video'));
-    try{ await openCamera($('video'), currentFacing); fitCanvas($('skeleton'), $('video')); }
+    try{ await openCamera($('video'), alternarFacing()); fitCanvas($('skeleton'), $('video')); }
     catch(err){ running=false; showPrepScreen('error', describeCameraError(err)); }
   });
   // a câmera não fica ligada em segundo plano
