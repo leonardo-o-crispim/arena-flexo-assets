@@ -41,23 +41,39 @@ export function usarLimiares(fn){ obterLimiares = fn; }
 export const EXERCISES = {
   flexao: {
     label:'Flexão', icon:'ex_pushup', repLabel:'flexões',
-    baseDamage:2, gold:1, tipo:'força',
+    baseDamage:2, gold:0.5, tipo:'força',
     defaults:{ down:100, up:150, minScore:0.30 },
     faixaEnergia:{ de:100, ate:150 },
     measure(pose, MIN){ return articulacao(pose, ['left_shoulder','left_elbow','left_wrist'],
                                                  ['right_shoulder','right_elbow','right_wrist'], MIN); }
   },
-  agachamento: {
-    label:'Agachamento', icon:'ex_squat', repLabel:'agachamentos',
-    baseDamage:1, gold:1, tipo:'força',
-    defaults:{ down:100, up:160, minScore:0.30 },
-    faixaEnergia:{ de:100, ate:160 },
-    measure(pose, MIN){ return articulacao(pose, ['left_hip','left_knee','left_ankle'],
-                                                 ['right_hip','right_knee','right_ankle'], MIN); }
+  // ---- ABDOMINAL (substituiu o agachamento) ----
+  // Medido de PERFIL, pelo ângulo do quadril: ombro–quadril–joelho. Deitado o
+  // tronco fica aberto em relação à coxa; ao contrair, fecha. É a mesma função
+  // `articulacao` dos outros — nenhum detector novo.
+  //
+  // ⚠️ ATENÇÃO: aqui o movimento é INVERTIDO em relação à flexão. Deitado é o
+  // ângulo ALTO (repouso) e contraído é o BAIXO (esforço). A máquina de estados
+  // não muda: ela só quer que o valor atravesse a faixa e volte. Quem muda são
+  // os rótulos do HUD, por isso `rotulosEstado` existe.
+  //
+  // Os limiares abaixo são geométricos e AINDA NÃO foram medidos num corpo real
+  // — mesma situação em que a flexão frontal começou. Confira o `ângulo` no
+  // painel 🔍 e ajuste, ou me mande um vídeo como o da última vez.
+  abdominal: {
+    label:'Abdominal', icon:'ex_situp', repLabel:'abdominais',
+    baseDamage:2, gold:0.5, tipo:'força',
+    defaults:{ down:100, up:125, minScore:0.30 },
+    faixaEnergia:{ de:100, ate:135 },
+    rotulosEstado:{ READY:'SUBA', BOTTOM:'DESÇA' },   // invertido: repouso é deitado
+    measure(pose, MIN){ return articulacao(pose, ['left_shoulder','left_hip','left_knee'],
+                                                 ['right_shoulder','right_hip','right_knee'], MIN); }
   },
   polichinelo: {
     label:'Polichinelo', icon:'ex_jack', repLabel:'polichinelos',
-    baseDamage:1, gold:0.5, tipo:'cardio',
+    // metade do ouro dos exercícios de força, como sempre foi — a proporção
+    // se manteve quando o ouro por repetição caiu pela metade
+    baseDamage:1, gold:0.25, tipo:'cardio',
     defaults:{ down:45, up:140, minScore:0.30 },
     faixaEnergia:{ de:45, ate:140 },
     measure(pose, MIN){ return articulacao(pose, ['left_hip','left_shoulder','left_wrist'],
@@ -68,7 +84,7 @@ export const EXERCISES = {
   // de posicionamento — de frente o quadril e os pés não aparecem.
   flexao_frontal: {
     label:'Flexão frontal', icon:'ex_pushup', repLabel:'flexões', oculto:true,
-    baseDamage:2, gold:1, tipo:'força',
+    baseDamage:2, gold:0.5, tipo:'força',
     // ⚙️ CALIBRADO COM MEDIÇÃO REAL (vídeo de 19/08, 8 flexões em 40 s).
     // O `down` era 100° e NUNCA era alcançado: lido no painel de debug, o vale
     // mais fundo do sinal foi 102° e o mais raso 130° — a máquina de estados
@@ -92,7 +108,7 @@ export const ehFlexao = id => FLEXAO_MODOS.includes(id);
 // ---------------------------------------------------------------
 const FORMA = {
   troncoEsticado: 125,   // flexão: ombro–quadril–joelho quase reto
-  troncoEmPe: 45,        // agachamento: tronco não pode dobrar ao meio
+  joelhoDobrado: 130,    // abdominal: joelho dobrado, pé no chão (evita "canivete")
 };
 function anguloTronco(pose, MIN){
   return articulacao(pose, ['left_shoulder','left_hip','left_knee'],
@@ -101,7 +117,11 @@ function anguloTronco(pose, MIN){
 const VALIDA_FORMA = {
   flexao:         (pose, MIN)=>{ const t = anguloTronco(pose, MIN); return !t || t.value > FORMA.troncoEsticado; },
   flexao_frontal: (pose, MIN)=>{ const t = anguloTronco(pose, MIN); return !t || t.value > FORMA.troncoEsticado; },
-  agachamento:    (pose, MIN)=>{ const t = anguloTronco(pose, MIN); return !t || t.value > FORMA.troncoEmPe; },
+  abdominal:      (pose, MIN)=>{
+    const j = articulacao(pose, ['left_hip','left_knee','left_ankle'],
+                                ['right_hip','right_knee','right_ankle'], MIN);
+    return !j || j.value < FORMA.joelhoDobrado;    // perna esticada não é abdominal
+  },
   polichinelo:    ()=> true,
 };
 
@@ -201,7 +221,9 @@ export const REQUIRED_KEYPOINTS = {
   // Cabeça e ombros são os que sempre aparecem — e o BlazePose ESTIMA os
   // outros mesmo ocultos, então a medida continua vindo.
   flexao_frontal: ['nose','left_shoulder','right_shoulder'],
-  agachamento: ['left_hip','right_hip','left_knee','right_knee','left_ankle','right_ankle','left_shoulder','right_shoulder'],
+  // de perfil, deitado: ombro, quadril e joelho é o que a medida precisa.
+  // Tornozelo fica de fora — costuma sair do quadro quando o celular está perto.
+  abdominal: ['left_shoulder','right_shoulder','left_hip','right_hip','left_knee','right_knee'],
   polichinelo: ['left_shoulder','right_shoulder','left_wrist','right_wrist','left_hip','right_hip','left_ankle','right_ankle'],
 };
 

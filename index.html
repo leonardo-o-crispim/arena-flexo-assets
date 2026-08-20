@@ -1069,7 +1069,7 @@
         </div>
       </div>
 
-      <div class="calib-msg" id="calibMsg">Posicione o corpo inteiro na tela 🧍 — de lado para flexão/agachamento, de frente para polichinelo</div>
+      <div class="calib-msg" id="calibMsg">Posicione o corpo inteiro na tela 🧍 — de lado para flexão/abdominal, de frente para polichinelo</div>
 
       <div class="debug-btn" id="debugBtn" title="ver os números do reconhecimento">🔍</div>
       <div class="debug-panel" id="debugPanel" style="display:none;"></div>
@@ -1294,14 +1294,14 @@ import { Events, EVT, EXERCISES, ehFlexao, createDetector, usarLimiares,
       <path d="M4.2 12 H1.9 M22.1 12 H19.8 M12 4.2 V1.9 M12 22.1 V19.8" stroke="${PAL.goldL}" stroke-width="1.2"/>
       <circle cx="4.2" cy="4.2" r=".9" stroke="${PAL.goldL}"/><circle cx="19.8" cy="4.2" r=".9" stroke="${PAL.goldL}"/>
       <circle cx="4.2" cy="19.8" r=".9" stroke="${PAL.goldL}"/><circle cx="19.8" cy="19.8" r=".9" stroke="${PAL.goldL}"/>`),
-    ex_squat: svg(`
-      <path d="M12 2.6 L21.4 19.4 H2.6 Z" stroke="${PAL.gold}"/>
-      <path d="M12 7.2 L17.8 17.2 H6.2 Z" stroke="${PAL.goldD}"/>
-      <path d="M12 11.4 L15.2 17.2 H8.8 Z" stroke="${PAL.cyan}"/>
-      <path d="M12 2.6 V17.2 M2.6 19.4 L17.8 17.2 M21.4 19.4 L6.2 17.2" stroke="${PAL.blue}" stroke-width="1" opacity=".6"/>
-      <circle cx="12" cy="2.6" r=".9" stroke="${PAL.goldL}"/>
-      <circle cx="2.6" cy="19.4" r=".9" stroke="${PAL.goldL}"/>
-      <circle cx="21.4" cy="19.4" r=".9" stroke="${PAL.goldL}"/>`),
+    // ABDOMINAL — de perfil: chão, perna dobrada e o tronco fechando sobre ela
+    ex_situp: svg(`
+      <path d="M2.4 19.6 H21.6" stroke="${PAL.goldD}"/>
+      <path d="M14.6 19.6 L18.4 12.4 L21.2 19.6" stroke="${PAL.gold}"/>
+      <path d="M14.6 19.6 L7.4 14.2" stroke="${PAL.cyan}"/>
+      <circle cx="5.8" cy="12.8" r="2" stroke="${PAL.steel}"/>
+      <path d="M6.6 9.4 Q11 5.4 16.2 8" stroke="${PAL.blue}" stroke-width="1" opacity=".7" stroke-dasharray="2 2.2"/>
+      <path d="M14.4 6.6 L16.4 7.9 L14.8 9.6" stroke="${PAL.goldL}" stroke-width="1"/>`),
     ex_jack: svg(`
       <circle cx="12" cy="12" r="9.2" stroke="${PAL.gold}"/>
       <circle cx="12" cy="12" r="5.9" stroke="${PAL.goldD}"/>
@@ -1649,16 +1649,17 @@ import { Events, EVT, EXERCISES, ehFlexao, createDetector, usarLimiares,
       <path d="M60 14 V6 M57 9 L60 6 L63 9" stroke="${PAL.goldL}" stroke-width="1.6"/>
       <path d="M22 34 V50 M19 47 L22 50 L25 47" stroke="${PAL.goldL}" stroke-width="1.6"/>`),
 
-    // AGACHAMENTO — de perfil, quadril recuado, coxa paralela ao chão
-    pose_agachamento: poseSvg(`
+    // ABDOMINAL — de perfil, deitado: joelho dobrado e o tronco subindo
+    pose_abdominal: poseSvg(`
       ${POSE_FRAME}
       ${POSE_GROUND(66)}
-      <circle cx="51" cy="19" r="6" stroke="${PAL.steel}"/>
-      <path d="M53 26 L61 43" stroke="${PAL.ice}"/>
-      <path d="M54 30 L39 35" stroke="${PAL.steel}"/>
-      <path d="M61 43 L44 48 L48 64 L57 64" stroke="${PAL.steel}"/>
-      <path d="M61 43 L50 49 L54 64" stroke="${PAL.steelD}" stroke-width="1.6"/>
-      <path d="M80 26 V44 M77 41 L80 44 L83 41" stroke="${PAL.goldL}" stroke-width="1.6"/>`),
+      <path d="M78 66 L86 48 L94 66" stroke="${PAL.steel}"/>
+      <path d="M78 66 L52 56" stroke="${PAL.ice}"/>
+      <circle cx="46" cy="53" r="6" stroke="${PAL.steel}"/>
+      <path d="M52 56 L60 46" stroke="${PAL.steelD}" stroke-width="1.6"/>
+      <path d="M42 44 Q54 30 70 38" stroke="${PAL.goldL}" stroke-width="1.5"
+            stroke-dasharray="3 3.5"/>
+      <path d="M66 34 L71 38 L66 42" stroke="${PAL.goldL}" stroke-width="1.5"/>`),
 
     // POLICHINELO — de frente, braços e pernas abertos (o momento mais largo)
     pose_polichinelo: poseSvg(`
@@ -1804,9 +1805,9 @@ import { Events, EVT, EXERCISES, ehFlexao, createDetector, usarLimiares,
       art:'pose_flexao_frontal', imagem:'',
       dica:'Fique <b>de frente</b> para a câmera, com o celular no chão à sua frente.<br>Bastam <b>cabeça e ombros</b> no quadro — as mãos podem sumir.'
     },
-    agachamento: {
-      art:'pose_agachamento', imagem:'',
-      dica:'Fique <b>de perfil</b> para a câmera.<br>Quadril, joelhos e pés precisam aparecer o tempo todo.'
+    abdominal: {
+      art:'pose_abdominal', imagem:'',
+      dica:'Deite <b>de perfil</b> para a câmera, joelhos dobrados.<br>Ombro, quadril e joelho precisam aparecer o tempo todo.'
     },
     polichinelo: {
       art:'pose_polichinelo', imagem:'',
@@ -1855,6 +1856,10 @@ import { Events, EVT, EXERCISES, ehFlexao, createDetector, usarLimiares,
     // 2) recompensa por exercício  → campo "gold" de cada exercício em EXERCISES
     // 3) recompensa por vitória    → atributo "reward" gerado por MONSTER_GROWTH
     bonusVelocidade: { sobra40: 0.5, sobra15: 0.2 }, // % extra do prêmio ao vencer com 40% / 15% do tempo sobrando
+    // 🔁 Monstro JÁ derrotado paga só esta fração do prêmio. A primeira vitória
+    // continua valendo 100% — é ela que recompensa o avanço. Repetir o mesmo
+    // inimigo continua rendendo, só deixa de competir com seguir em frente.
+    fracaoRepetida: 1/3,
   };
 
   // -------- 🧍 ATRIBUTOS BASE DO JOGADOR --------
@@ -2093,7 +2098,12 @@ import { Events, EVT, EXERCISES, ehFlexao, createDetector, usarLimiares,
     // ⚠️ defesa é SUBTRATIVA em Combat.computeDamage() — precisa ficar bem
     // abaixo do dano do jogador, por isso coeficientes baixos + teto.
     defense:           { base:0,   linear:0.08,  quad:0.004, growth:1, round:'floor',    min:0, max:12 },
-    reward:            { base:3,   linear:1.20,  quad:0.120, growth:1, round:'round',    min:1 },
+    // 💰 CURVA REBALANCEADA. O termo quadrático era o que fazia o ouro disparar
+    // na segunda metade do mapa: com 0.120 o último monstro comum pagava 108,
+    // 36× o primeiro. Reduzido a 0.050 (e o linear de 1.20 → 1.10), o nível 1
+    // fica intacto, o nível 3 cai ~25% e o fim do mapa ~43%. Varrer a campanha
+    // inteira uma vez: 1508 → 926 moedas.
+    reward:            { base:3,   linear:1.10,  quad:0.050, growth:1, round:'round',    min:1 },
     // ⭐ XP concedido ao derrotar. Como todo atributo daqui, nasce sozinho
     // para qualquer monstro novo — a dificuldade dele já define a experiência.
     xp:                { base:4,   linear:1.60,  quad:0.300, growth:1, round:'round',    min:1 },
@@ -2343,6 +2353,8 @@ import { Events, EVT, EXERCISES, ehFlexao, createDetector, usarLimiares,
       if(tf && tf.down === 100) tf.down = EXERCISES.flexao_frontal.defaults.down;
     }
     p.motorMedida = CALIBRAGEM;
+    // 🧹 O agachamento saiu do jogo: a chave dele só ficaria ocupando o save
+    delete p.thresholds.agachamento;
     p.equipped   = Object.assign({}, DEFAULT_PROFILE.equipped, loaded.equipped || {});
     p.owned      = Array.from(new Set([...(loaded.owned || []), ...DEFAULT_PROFILE.owned]));
 
@@ -2523,8 +2535,15 @@ import { Events, EVT, EXERCISES, ehFlexao, createDetector, usarLimiares,
       const eff = timeLimit > 0 ? timeLeft / timeLimit : 0;
       const extra = eff > 0.4 ? ECONOMY.bonusVelocidade.sobra40
                   : eff > 0.15 ? ECONOMY.bonusVelocidade.sobra15 : 0;
-      return Math.round(enemy.reward * (1 + extra));
+      // ⚠️ A consulta acontece ANTES de Progression.registerVictory() acrescentar
+      // este monstro à lista — é essa ordem que faz a primeira vitória valer
+      // integral. Inverter as duas chamadas faria toda vitória parecer repetida.
+      const repetida = this.jaDerrotado(enemy);
+      const bruto = enemy.reward * (1 + extra) * (repetida ? ECONOMY.fracaoRepetida : 1);
+      return Math.max(1, Math.round(bruto));
     },
+    // reaproveita o registro que a progressão já mantém: nenhum estado novo
+    jaDerrotado(enemy){ return (profile.defeated || []).includes(enemy.id); },
     display(v){ return Math.floor(v); },
   };
 
@@ -2547,6 +2566,7 @@ import { Events, EVT, EXERCISES, ehFlexao, createDetector, usarLimiares,
     vitoria: CDN_AUDIO + 'vitoria.ogg.mp3',   // ao derrotar o monstro
     derrota: CDN_AUDIO + 'derrota.ogg.mp3',   // ao perder a batalha
     furia:   CDN_AUDIO + 'furia.ogg.mp3',     // monstro entra em ENFURECIDO
+    dano:    CDN_AUDIO + 'dano.ogg.wav',      // repetição validada → golpe no inimigo
   };
 
   // ═══════════════════════════════════════════════════════════════
@@ -2560,20 +2580,24 @@ import { Events, EVT, EXERCISES, ehFlexao, createDetector, usarLimiares,
     volumeMusica: 0.42,   // trilhas ficam abaixo dos efeitos para não competir
     volumeEfeito: 0.75,
     fadeMs: 550,          // troca de trilha por transição, nunca por corte seco
-    vozesClique: 4,       // toques rápidos não podem se cortar
+    // 🔁 Sons que disparam em rajada precisam de VÁRIAS VOZES: um único
+    // elemento <audio> se corta ao reiniciar, e duas repetições seguidas
+    // engoliriam a primeira. Nome do som → quantas vozes girar.
+    vozes: { clique: 4, dano: 3 },
   };
   const Som = {
     MUSICAS: ['menu','batalha'],
-    _el:{}, _cliques:[], _iClique:0, _atual:null, _liberado:false,
+    _el:{}, _pools:{}, _iPool:{}, _atual:null, _liberado:false,
 
     init(){
       Object.entries(AUDIO_URLS).forEach(([nome, url])=>{
         if(!url) return;
-        if(nome === 'clique'){
-          // um único elemento não toca sobreposto: pequeno pool de vozes
-          for(let i=0; i<SOM.vozesClique; i++){
+        const vozes = SOM.vozes[nome];
+        if(vozes){
+          this._pools[nome] = []; this._iPool[nome] = 0;
+          for(let i=0; i<vozes; i++){
             const a = new Audio(url); a.preload='auto'; a.volume = SOM.volumeEfeito;
-            this._cliques.push(a);
+            this._pools[nome].push(a);
           }
           return;
         }
@@ -2590,17 +2614,12 @@ import { Events, EVT, EXERCISES, ehFlexao, createDetector, usarLimiares,
 
     efeito(nome){
       if(!this._liberado || this.mudo()) return;
-      if(nome === 'clique'){
-        const a = this._cliques[this._iClique];
-        if(!a) return;
-        this._iClique = (this._iClique + 1) % this._cliques.length;
-        try{ a.currentTime = 0; }catch(e){}
-        a.play().catch(()=>{});                 // navegador pode recusar: nunca quebra o jogo
-        return;
-      }
-      const a = this._el[nome]; if(!a) return;
+      const pool = this._pools[nome];
+      const a = pool ? pool[this._iPool[nome]] : this._el[nome];
+      if(!a) return;
+      if(pool) this._iPool[nome] = (this._iPool[nome] + 1) % pool.length;
       try{ a.currentTime = 0; }catch(e){}
-      a.play().catch(()=>{});
+      a.play().catch(()=>{});                   // navegador pode recusar: nunca quebra o jogo
     },
 
     // troca de trilha com fade. musica(null) silencia (usado antes dos stingers)
@@ -3161,7 +3180,7 @@ import { Events, EVT, EXERCISES, ehFlexao, createDetector, usarLimiares,
     Battle.timeLimit = Player.battleTime(enemy);   // ⏱️ tempo do inimigo + bônus da armadura
     Battle.timeLeft = Battle.timeLimit;
     Battle.started=false; Battle.over=false; Battle.result=null; Battle.loseReason=null;
-    Battle.goldRun=0; Battle.dmgDealt=0; Battle.bounty=0; Battle.unlockedNew=false; Battle.nextMonster=null;
+    Battle.goldRun=0; Battle.dmgDealt=0; Battle.bounty=0; Battle.repetida=false; Battle.unlockedNew=false; Battle.nextMonster=null;
     Battle.furious=false; Battle.xpRun=0; Battle.novoTitulo=null; clearFury();
 
     $('enemyEmoji').innerHTML = enemyVisualHTML(enemy);
@@ -3233,6 +3252,11 @@ import { Events, EVT, EXERCISES, ehFlexao, createDetector, usarLimiares,
     const { dmg, crit } = Combat.playerStrike(selectedExercise, Battle.enemy, streak);
     Battle.enemyHP = Math.max(0, Battle.enemyHP - dmg);
     Battle.dmgDealt += dmg;
+    // 🔊 Confirmação da repetição. Fica AQUI, e não no evento EXERCISE_COMPLETED,
+    // porque esta função pode sair sem bater (batalha encerrada ou não iniciada)
+    // pela guarda lá em cima — e o som só deve soar quando o dano saiu mesmo.
+    // Movimento inválido nem chega neste caminho: ele vai para EXERCISE_INVALID.
+    Som.efeito('dano');
     $('hpFill').style.width = Math.max(0,(Battle.enemyHP/Battle.enemy.maxHealth)*100) + '%';
     retriggerClass($('enemyEmoji'),'hit');
     floatingText((crit?'CRÍTICO −':'−')+dmg, crit?'#facc15':'#fca5a5');
@@ -3302,6 +3326,7 @@ import { Events, EVT, EXERCISES, ehFlexao, createDetector, usarLimiares,
     clearBattleTimers();
     Som.musica(null); Som.efeito('vitoria');   // trilha sai, o stinger soa no silêncio
     const enemy = Battle.enemy;
+    Battle.repetida = Economy.jaDerrotado(enemy);   // lido ANTES do registro abaixo
     Battle.bounty = Economy.victoryBounty(enemy, Battle.timeLeft, Battle.timeLimit);
     Economy.grant(Battle.bounty);                            // fonte 3: prêmio da vitória
     Battle.goldRun += Battle.bounty;
@@ -3320,7 +3345,10 @@ import { Events, EVT, EXERCISES, ehFlexao, createDetector, usarLimiares,
               : res.newLevel   ? `NÍVEL ${res.next.level} DESBLOQUEADO — ${res.next.area.toUpperCase()}!`
               : res.newMonster ? `NOVO MONSTRO LIBERADO: ${res.next.name.toUpperCase()}!`
               : 'Monstro derrotado novamente.';
-    const premio = `${pixelIconHTML('coin')} +${Battle.bounty} ouro<span class="overlay-xp">⭐ +${xpRes.xp} XP</span>`;
+    // sem este aviso o prêmio menor pareceria defeito, não regra
+    const premio = `${pixelIconHTML('coin')} +${Battle.bounty} ouro`
+      + (Battle.repetida ? `<span class="overlay-xp">já derrotado · ⅓ do prêmio</span>` : '')
+      + `<span class="overlay-xp">⭐ +${xpRes.xp} XP</span>`;
     const subida = xpRes.subiu
       ? `<span class="overlay-levelup">⬆ NÍVEL ${xpRes.nivelDepois}! +${xpRes.ouro} moedas</span><br>` : '';
     // cruzar uma faixa de título é o momento mais raro da progressão: ganha destaque
@@ -3346,7 +3374,7 @@ import { Events, EVT, EXERCISES, ehFlexao, createDetector, usarLimiares,
 
   // feedback imperativo: diz o que FAZER agora, não só em que estado o corpo está.
   // Reaproveita o .state-tag que já existia — nenhum espaço novo ocupado na tela.
-  const STATE_LABEL = { READY:'DESÇA', DESCENDING:'DESCENDO', BOTTOM:'SUBA', ASCENDING:'SUBINDO' };
+  const STATE_LABEL = { READY:'DESÇA', BOTTOM:'SUBA' };
   function updateHud(reading){
     $('repNumber').textContent = repCount;
     $('streakStat').textContent = streak;
@@ -3364,7 +3392,10 @@ import { Events, EVT, EXERCISES, ehFlexao, createDetector, usarLimiares,
     // e o degrau apareceria. 'ASCENDING' então nem existe mais.
     $('powerFill').style.width = pct + '%';
     $('stateTag').style.display='block';
-    $('stateTag').textContent = STATE_LABEL[reading.state] || reading.state;
+    // o abdominal inverte o movimento (repouso é deitado), então ele traz os
+    // próprios rótulos; quem não traz usa os padrões da flexão
+    const rotulos = EXERCISES[selectedExercise].rotulosEstado || STATE_LABEL;
+    $('stateTag').textContent = rotulos[reading.state] || reading.state;
     $('stateTag').style.color = reading.formOK ? '' : '#f87171';
     $('comboLabel').textContent = streak>=PLAYER_BASE.critACada ? `x${streak} combo` : '';
   }
